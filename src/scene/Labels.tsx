@@ -25,7 +25,7 @@ const BANDS: [number, number][] = [
   [70, 44],
   [52, 32],
 ]
-const LEVEL_SCALE = [0.74, 0.8, 0.72, 0.68]
+const LEVEL_SCALE = [0.6, 0.8, 0.72, 0.68]
 /** Average glyph advance of Inter 500, in ems. */
 const EM = 0.56
 
@@ -86,7 +86,7 @@ export function Labels() {
 
       let target: number
       if (lvl === 0) {
-        target = smooth(14, 40, d) * (hasFocus ? (i === w.focus ? 0.8 : focusNeighbors?.has(i) ? 0.4 : 0.16) : 0.78) * (t.mapped === false ? 0.62 : 1)
+        target = smooth(14, 40, d) * (hasFocus ? (i === w.focus ? 0.8 : focusNeighbors?.has(i) ? 0.4 : 0.16) : 0.6) * (t.mapped === false ? 0.62 : 1)
         priority += hasFocus ? 0 : 30
       } else {
         const [far, near] = BANDS[lvl]

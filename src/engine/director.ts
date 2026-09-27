@@ -155,7 +155,7 @@ function travel(focusId: string | null, via: string, quiet = false) {
   const arrive = () => {
     const s = useExplore.getState()
     s.setTravelling(false)
-    s.say(`${topic.title} — ${levelName[topic.level].toLowerCase()} in ${graph.get(topic.domain)?.title ?? topic.domain}.`)
+    s.say(topic.level === 0 ? `${topic.title} — a domain of knowledge.` : `${topic.title} — ${levelName[topic.level].toLowerCase()} in ${graph.get(topic.domain)?.title ?? topic.domain}.`)
     const k = useKnowledge.getState()
     k.touch(topic.id)
     if (previous >= 0 && graph.edgeBetween(previous, idx) >= 0) k.addPath(graph.topics[previous].id, topic.id)

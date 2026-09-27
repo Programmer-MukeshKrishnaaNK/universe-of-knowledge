@@ -130,8 +130,9 @@ void main() {
   float mapVis = 0.38 + 0.62 * uMap;
 
   vec3 col = vec3(0.0);
-  col += coreCol * core * (0.3 + 1.0 * e);
-  col += vColor * glow * (0.12 + 0.85 * e);
+  // Quiet nodes keep very little baseline light — only emphasis earns brightness.
+  col += coreCol * core * (0.12 + 1.18 * e);
+  col += vColor * glow * (0.04 + 0.93 * e);
   col += vColor * (orbit + outer) * (0.25 + 0.9 * e);
   col += vec3(1.0) * focusRing * 0.7;
   col += mix(vColor, vec3(1.0), 0.6) * hoverRing * 0.75;

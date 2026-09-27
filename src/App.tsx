@@ -58,7 +58,7 @@ export default function App() {
   }, [webgl])
 
   return (
-    <div className={`app ${focusId ? 'has-focus' : ''}`} data-phase={phase}>
+    <div className={`app ${focusId ? 'has-focus' : ''} ${webgl ? '' : 'is-flat'}`} data-phase={phase}>
       {webgl ? (
         ready && (
           <Suspense fallback={null}>

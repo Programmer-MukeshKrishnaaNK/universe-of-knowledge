@@ -155,6 +155,7 @@ export function LiveRegion() {
 export function useKeyboardNavigation() {
   useEffect(() => {
     let cursor = -1
+    let arrowPreview = false // Esc dismisses a preview only if the arrow keys made it
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || e.metaKey || e.ctrlKey || e.altKey) return
@@ -168,15 +169,19 @@ export function useKeyboardNavigation() {
         const current = s.previewId ? pool.indexOf(s.previewId) : cursor
         cursor = (current + (e.key === 'ArrowRight' ? 1 : pool.length - 1) + (current < 0 && e.key === 'ArrowLeft' ? 1 : 0)) % pool.length
         s.setPreview(pool[cursor])
+        arrowPreview = true
         const p = graph.get(pool[cursor])
         if (p) s.say(`${p.title}. ${p.short} Press Enter to travel.`)
       } else if (e.key === 'Enter' && s.previewId && t.tagName !== 'BUTTON' && t.tagName !== 'A') {
         e.preventDefault()
         s.travelTo(s.previewId, 'keyboard')
         cursor = -1
+        arrowPreview = false
       } else if (e.key === 'Escape') {
-        if (s.previewId) s.setPreview(null)
+        if (arrowPreview && s.previewId) s.setPreview(null)
         else s.back()
+        arrowPreview = false
+        cursor = -1
       } else if (e.key === 'h' || e.key === 'H') s.home()
       else if (e.key === 'm' || e.key === 'M') s.toggleMap()
     }
