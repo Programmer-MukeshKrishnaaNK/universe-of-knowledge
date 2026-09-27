@@ -8,6 +8,7 @@ import { Driver } from './Driver'
 import { Dust } from './Dust'
 import { Edges } from './Edges'
 import { Labels } from './Labels'
+import { Nebulae } from './Nebulae'
 import { Nodes } from './Nodes'
 import { Ripples } from './Ripples'
 import { Sky } from './Sky'
@@ -41,6 +42,7 @@ export default function UniverseCanvas() {
       />
       <Driver />
       <Sky />
+      <Nebulae />
       <Dust />
       <Edges />
       <Nodes />

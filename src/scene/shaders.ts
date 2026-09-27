@@ -205,29 +205,63 @@ void main() {
 export const dustVertex = /* glsl */ `
 attribute float aSize;
 attribute float aSeed;
+attribute float aMode;
 attribute vec3 aColor;
+attribute vec3 aTan;
+attribute vec3 aCenter;
 
 uniform float uTime;
 uniform float uPixelRatio;
 uniform float uReveal;
 uniform float uAttenuate;
 uniform float uMotion;
+uniform float uWrap;
+uniform vec3 uCamPos;
 
 varying vec3 vColor;
 varying float vAlpha;
 
 void main() {
   vec3 p = position;
-  // Barely-there drift so the space feels alive, never busy.
-  p += vec3(sin(uTime * 0.05 + aSeed * 40.0), cos(uTime * 0.04 + aSeed * 23.0), sin(uTime * 0.045 + aSeed * 17.0)) * 0.6 * uAttenuate * uMotion;
+  float t = uTime * uMotion;
+  float alpha = 1.0;
+  float tw;
+
+  if (aMode > 0.5 && aMode < 1.5) {
+    // Stream: glide along the local tangent, fading in and out at each end.
+    float ph = fract(t * aCenter.x + aSeed * 17.0);
+    p += aTan * (ph - 0.5);
+    alpha = sin(ph * 3.14159);
+    tw = 1.0;
+  } else if (aMode > 1.5 && aMode < 2.5) {
+    // Orbit around a centre (y axis).
+    vec3 d = p - aCenter;
+    float ang = t * aTan.x;
+    float c = cos(ang), s = sin(ang);
+    p = aCenter + vec3(c * d.x - s * d.z, d.y, s * d.x + c * d.z);
+    tw = 0.8 + 0.2 * sin(t * 0.7 + aSeed * 40.0);
+  } else if (aMode > 2.5) {
+    // Lattice: a single coherent wave sweeps through the structure.
+    tw = 0.45 + 0.55 * pow(0.5 + 0.5 * sin(dot(position, vec3(0.07, 0.11, 0.05)) - t * 0.55), 2.0);
+  } else {
+    p += vec3(sin(t * 0.05 + aSeed * 40.0), cos(t * 0.04 + aSeed * 23.0), sin(t * 0.045 + aSeed * 17.0)) * 0.5 * uAttenuate;
+    tw = 0.72 + 0.28 * sin(t * (0.4 + aSeed * 0.9) + aSeed * 60.0);
+  }
+
+  if (uWrap > 0.5) {
+    // Foreground motes live in a box that travels with the camera.
+    p = mod(p - uCamPos + 70.0, 140.0) - 70.0 + uCamPos;
+  }
+
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
   float depth = max(-mv.z, 0.001);
   float att = mix(1.0, clamp(220.0 / depth, 0.35, 2.6), uAttenuate);
   gl_PointSize = aSize * att * uPixelRatio;
-  float tw = 0.72 + 0.28 * sin(uTime * (0.4 + aSeed * 0.9) * uMotion + aSeed * 60.0);
   float reveal = smoothstep(aSeed * 0.7, aSeed * 0.7 + 0.3, uReveal);
-  vAlpha = tw * reveal * mix(1.0, smoothstep(1400.0, 500.0, depth), uAttenuate);
+  float far = mix(1.0, smoothstep(1400.0, 500.0, depth), uAttenuate);
+  float near = uWrap > 0.5 ? smoothstep(4.0, 18.0, depth) * smoothstep(70.0, 40.0, depth) : smoothstep(0.5, 4.0, depth);
+  vAlpha = tw * alpha * reveal * far * near;
   vColor = aColor;
 }
 `
@@ -307,5 +341,113 @@ void main() {
   float wake = smoothstep(0.92, 0.3, r) * smoothstep(0.0, 0.92, r) * 0.08;
   float a = (ring * mix(0.9, 0.45, uKind) + wake) * fade;
   gl_FragColor = vec4(vec3(0.85, 0.9, 1.0) * a, 1.0);
+}
+`
+
+// ─── Nebulae ────────────────────────────────────────────────────────────
+// Large, very faint instanced veils. They add depth and a sense of volume
+// without adding light: values stay well under the bloom threshold.
+
+export const nebulaVertex = /* glsl */ `
+attribute vec3 iPos;
+attribute vec3 iColor;
+attribute float iSize;
+attribute float iSeed;
+attribute float iAlpha;
+
+uniform float uReveal;
+uniform float uDim;
+
+varying vec2 vUv;
+varying vec3 vColor;
+varying float vAlpha;
+varying float vSeed;
+
+void main() {
+  vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
+  float depth = -mv.z;
+  // Rotate each veil a little so they never look like stamped sprites.
+  float a = iSeed * 6.2831;
+  vec2 q = mat2(cos(a), -sin(a), sin(a), cos(a)) * position.xy;
+  mv.xy += q * iSize;
+  gl_Position = projectionMatrix * mv;
+  // Fade out as the camera enters a veil, and in the far distance.
+  float inside = smoothstep(iSize * 0.35, iSize * 1.3, depth);
+  float far = smoothstep(4200.0, 1600.0, depth);
+  vAlpha = iAlpha * inside * far * uReveal * mix(1.0, 0.55, uDim);
+  vUv = uv;
+  vColor = iColor;
+  vSeed = iSeed;
+}
+`
+
+export const nebulaFragment = /* glsl */ `
+varying vec2 vUv;
+varying vec3 vColor;
+varying float vAlpha;
+varying float vSeed;
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+
+void main() {
+  vec2 p = vUv * 2.0 - 1.0;
+  float r = dot(p, p);
+  if (r > 1.0) discard;
+  vec2 s = p * 2.2 + vSeed * 31.0;
+  float n = noise(s) * 0.6 + noise(s * 2.1 + 7.0) * 0.4;
+  float shape = pow(1.0 - r, 2.2) * smoothstep(0.25, 0.85, n);
+  gl_FragColor = vec4(vColor * shape * vAlpha, 1.0);
+}
+`
+
+// ─── Formation strokes ──────────────────────────────────────────────────
+// The skeleton of each domain formation: hairline strokes with the domain's
+// behaviour — energy pulses along field lines and traces, a slow wave
+// through lattices.
+
+export const strokeVertex = /* glsl */ `
+attribute vec3 aColor;
+attribute float aT;
+attribute float aKind;
+varying vec3 vColor;
+varying float vT;
+varying float vKind;
+varying float vFog;
+void main() {
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  vColor = aColor;
+  vT = aT;
+  vKind = aKind;
+  float d = -mv.z;
+  vFog = smoothstep(1300.0, 450.0, d) * smoothstep(1.0, 12.0, d);
+  // Lattice wave phase is carried in vT via world position.
+  if (aKind > 2.5) vT = dot(position, vec3(0.07, 0.11, 0.05));
+}
+`
+
+export const strokeFragment = /* glsl */ `
+uniform float uTime;
+uniform float uMotion;
+uniform float uGain;
+varying vec3 vColor;
+varying float vT;
+varying float vKind;
+varying float vFog;
+void main() {
+  float t = uTime * uMotion;
+  float k = 1.0;
+  if (vKind > 0.5 && vKind < 1.5) {
+    float ph = fract(vT / 14.0 - t * 0.25);
+    k = 0.45 + 2.2 * exp(-pow((ph - 0.5) * 9.0, 2.0));
+  } else if (vKind > 2.5) {
+    k = 0.4 + 1.3 * pow(0.5 + 0.5 * sin(vT - t * 0.55), 2.0);
+  }
+  gl_FragColor = vec4(vColor * k * vFog * uGain, 1.0);
 }
 `

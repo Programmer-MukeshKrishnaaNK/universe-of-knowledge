@@ -137,6 +137,16 @@ export function Labels() {
     const H = viewport.height
     const zone = (x: number, y: number, w: number, h: number): Candidate => ({ i: -1, target: 1, priority: 0, x: x + w / 2, y, w, h, s: 0 })
     const placed: Candidate[] = [zone(0, 0, W, 50)]
+    // Bright cores (domains, the focus) are obstacles too — no label under a sun.
+    for (let i = 0; i < graph.size; i++) {
+      if (graph.topics[i].level !== 0 && i !== w.focus) continue
+      w.nodePosition(i, q)
+      const depth = q.distanceTo(camera.position)
+      q.project(camera)
+      if (q.z > 1) continue
+      const rad = (w.size[i] * 1.1 * focal) / Math.max(depth, 0.1)
+      placed.push(zone((q.x * 0.5 + 0.5) * W - rad, (-q.y * 0.5 + 0.5) * H - rad, rad * 2, rad * 2))
+    }
     if (hasFocus) {
       const inset = panelInset()
       if (inset.x) placed.push(zone(W - inset.x, 0, inset.x, H))

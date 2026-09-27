@@ -18,6 +18,11 @@ export function Driver() {
   const size = useThree((s) => s.size)
   const pointer = useRef({ x: -1, y: -1, inside: false, moved: true })
 
+  const scene = useThree((s) => s.scene)
+  useEffect(() => {
+    if (import.meta.env.DEV) ((window as unknown as { __uok: Record<string, unknown> }).__uok ?? {}).scene = scene
+  }, [scene])
+
   useEffect(() => {
     rig.attach(camera)
     startDirector()

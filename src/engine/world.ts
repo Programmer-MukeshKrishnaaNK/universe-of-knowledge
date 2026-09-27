@@ -329,7 +329,7 @@ export class World {
       let flow = 0
       if (f < 0) {
         const topLevel = Math.min(g.topics[s].level, g.topics[t].level)
-        v = type === 0 ? (topLevel === 0 ? 0.3 : 0.2) : type === 1 ? 0.085 : type === 3 ? 0.11 : 0.055
+        v = type === 0 ? (topLevel === 0 ? 0.3 : 0.2) : type === 1 ? 0.05 : type === 3 ? 0.055 : 0.03
       } else if (s === f || t === f) {
         v = 1
         flow = 1
