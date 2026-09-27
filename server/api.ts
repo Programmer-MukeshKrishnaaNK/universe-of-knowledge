@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { allTopics } from '../src/data'
+import { allTopics, papers } from '../src/data'
 import { KnowledgeGraph } from '../src/graph/buildGraph'
 import { buildMessages, composeOffline, type Mode } from './ai/prompt'
 import { OfflineProvider, providerFromEnv, type AIProvider, type ChatMessage } from './ai/providers'
 
-const MODES: Mode[] = ['simple', 'analogy', 'math', 'eli15', 'deeper', 'confused', 'question']
+const MODES: Mode[] = ['simple', 'analogy', 'math', 'eli15', 'deeper', 'confused', 'question', 'next', 'paper']
 
 type Next = (err?: unknown) => void
 
@@ -75,6 +75,13 @@ export function createApi(env: Record<string, string | undefined>) {
         return
       }
       const question = typeof body.question === 'string' ? body.question.slice(0, 400) : undefined
+      // Papers must be ones this topic actually cites — the guide never explains an arbitrary id.
+      const paper = mode === 'paper' && typeof body.paperId === 'string' && topic.research?.some((r) => r.paper === body.paperId) ? papers[body.paperId] : undefined
+      if (mode === 'paper' && !paper) {
+        res.statusCode = 400
+        res.end('Unknown paper for this topic.')
+        return
+      }
       const depth = ['simple', 'detailed', 'technical'].includes(String(body.depth)) ? String(body.depth) : 'simple'
       const known = Array.isArray(body.known) ? body.known.filter((x): x is string => typeof x === 'string').slice(0, 60) : []
       const history: ChatMessage[] = Array.isArray(body.history)
@@ -93,10 +100,10 @@ export function createApi(env: Record<string, string | undefined>) {
       res.on('close', () => ctrl.abort())
       const send = (payload: object | string) => res.write(`data: ${typeof payload === 'string' ? payload : JSON.stringify(payload)}\n\n`)
 
-      const offline = new OfflineProvider(() => composeOffline(graph, topic, mode, known))
+      const offline = new OfflineProvider(() => composeOffline(graph, topic, mode, known, paper))
       const provider = live ?? offline
       const run = async (p: AIProvider) => {
-        const messages = buildMessages(graph, topic, mode, { question, depth, known, history })
+        const messages = buildMessages(graph, topic, mode, { question, depth, known, history, paper })
         for await (const delta of p.stream(messages, ctrl.signal)) send({ delta })
       }
       try {

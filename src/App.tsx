@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { graph, getLayout } from './graph'
 import { useExplore } from './store/explore'
-import { Controls, HoverTip, Journey, LiveRegion, useKeyboardNavigation, Wordmark } from './ui/Chrome'
+import { Controls, DepthMeter, HoverTip, Journey, LiveRegion, useKeyboardNavigation, Wordmark } from './ui/Chrome'
 import { Fallback, hasWebGL } from './ui/Fallback'
 import { Intro } from './ui/Intro'
 import { Search } from './ui/Search'
@@ -76,6 +76,7 @@ export default function App() {
       </header>
       <HoverTip />
       <Journey />
+      <DepthMeter />
       <Controls />
       <Suspense fallback={null}>{focusId && <TopicPanel />}</Suspense>
       <LiveRegion />

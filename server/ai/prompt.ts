@@ -1,9 +1,9 @@
-import type { Topic } from '../../src/data/schema'
+import type { Paper, Topic } from '../../src/data/schema'
 import type { KnowledgeGraph } from '../../src/graph/buildGraph'
-import { stepBack } from '../../src/graph/recommend'
+import { advise, stepBack } from '../../src/graph/recommend'
 import type { ChatMessage } from './providers'
 
-export type Mode = 'simple' | 'analogy' | 'math' | 'eli15' | 'deeper' | 'confused' | 'question'
+export type Mode = 'simple' | 'analogy' | 'math' | 'eli15' | 'deeper' | 'confused' | 'question' | 'next' | 'paper'
 
 const MODE_INSTRUCTIONS: Record<Mode, string> = {
   simple: 'Explain this topic as simply as possible, for someone with no background. Start from an everyday intuition. About 120–170 words.',
@@ -14,6 +14,8 @@ const MODE_INSTRUCTIONS: Record<Mode, string> = {
   confused:
     'The learner said they don’t understand this. Be warm and reassuring (never imply they should already know it). Start with "Let’s take one step back." Rebuild the idea from the most basic intuition, in small steps, and name which single prerequisite would help most. About 150–220 words.',
   question: 'Answer the learner’s question about this topic directly and clearly. If the question is outside the topic, answer briefly and connect it back. Up to about 220 words.',
+  next: 'Recommend what this learner should explore next. Use ONLY the RECOMMENDED NEXT list (from the knowledge graph) — explain in a sentence or two why each of the top two or three follows naturally from this topic and from what they already know. Link each with [[id|title]]. About 120–170 words.',
+  paper: 'Explain the RESEARCH PAPER below to this learner: what question it asked, what it found or proposed, and why it mattered, in plain language at their depth. Use only the paper details given plus standard textbook knowledge; if the learner would need details beyond them, say so and suggest reading the source. About 150–220 words.',
 }
 
 function topicCard(t: Topic, depth: string) {
@@ -36,7 +38,7 @@ export function buildMessages(
   graph: KnowledgeGraph,
   topic: Topic,
   mode: Mode,
-  opts: { question?: string; depth: string; known: string[]; history: ChatMessage[] },
+  opts: { question?: string; depth: string; known: string[]; history: ChatMessage[]; paper?: Paper },
 ): ChatMessage[] {
   const neighborhood = new Map<string, string>()
   const add = (x?: Topic) => x && neighborhood.set(x.id, x.title)
@@ -67,14 +69,27 @@ export function buildMessages(
     [...neighborhood].map(([id, title]) => `${id} — ${title}`).join('\n'),
     '',
     `LEARNER: prefers the "${opts.depth}" depth.${knownTitles.length ? ` Already understands: ${knownTitles.join(', ')}.` : ' No recorded background yet — assume none.'}`,
+    ...(mode === 'next' ? ['', 'RECOMMENDED NEXT (from the knowledge graph, best first)', recommendedNext(graph, topic, opts.known)] : []),
+    ...(mode === 'paper' && opts.paper ? ['', 'RESEARCH PAPER', paperCard(opts.paper)] : []),
   ].join('\n')
 
   const ask = mode === 'question' && opts.question ? `${MODE_INSTRUCTIONS.question}\n\nQuestion: ${opts.question}` : MODE_INSTRUCTIONS[mode]
   return [{ role: 'system', content: system }, ...opts.history.slice(-4), { role: 'user', content: `Topic: ${topic.title}\n\n${ask}` }]
 }
 
+function recommendedNext(graph: KnowledgeGraph, topic: Topic, known: string[]) {
+  const a = advise(graph, topic.id, (id) => (known.includes(id) ? 'understood' : undefined))
+  const list = a.next.slice(0, 5).map((t) => `${t.id} — ${t.title}: ${t.short}`)
+  if (!a.ready && a.stepBack) list.unshift(`${a.stepBack.id} — ${a.stepBack.title} (a gentle step back first): ${a.stepBack.short}`)
+  return list.join('\n') || '(nothing deeper is charted yet — suggest related topics instead)'
+}
+
+function paperCard(p: Paper) {
+  return [`TITLE: ${p.title}`, `AUTHORS: ${p.authors}`, `YEAR: ${p.year}`, `PUBLISHED IN: ${p.publication}`, `SUMMARY: ${p.summary}`, `WHY IT MATTERS: ${p.whyItMatters}`, `BACKGROUND NEEDED: ${p.background}`].join('\n')
+}
+
 /** Graph-grounded answers when no live model is configured. */
-export function composeOffline(graph: KnowledgeGraph, topic: Topic, mode: Mode, known: string[] = []): string {
+export function composeOffline(graph: KnowledgeGraph, topic: Topic, mode: Mode, known: string[] = [], paper?: Paper): string {
   const link = (t: Topic) => `[[${t.id}|${t.title}]]`
   const pre = graph.prerequisites(topic.id)
   const deeper = graph.deeper(topic.id).slice(0, 4)
@@ -104,6 +119,19 @@ export function composeOffline(graph: KnowledgeGraph, topic: Topic, mode: Mode, 
         .filter(Boolean)
         .join('\n\n')
     }
+    case 'next': {
+      const a = advise(graph, topic.id, (id) => (known.includes(id) ? 'understood' : undefined))
+      const next = a.next.slice(0, 3)
+      const lines = []
+      if (!a.ready && a.stepBack) lines.push(`Before going further, ${link(a.stepBack)} will make this click — ${a.stepBack.short.charAt(0).toLowerCase() + a.stepBack.short.slice(1)}`)
+      if (next.length) lines.push(`From here, the natural next steps are:\n${next.map((t) => `- ${link(t)} — ${t.short}`).join('\n')}`)
+      else lines.push('Nothing deeper is charted from here yet — try the related ideas beside it.')
+      return lines.join('\n\n')
+    }
+    case 'paper':
+      return paper
+        ? [`${paper.authors} (${paper.year}), in ${paper.publication}.`, paper.summary, `Why it matters: ${paper.whyItMatters}`, 'For the full argument and data, the original source is linked below the paper.'].join('\n\n')
+        : 'That paper isn’t in the map.'
     case 'question':
     default:
       return [

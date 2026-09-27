@@ -156,7 +156,9 @@ function travel(focusId: string | null, via: string, quiet = false) {
     const s = useExplore.getState()
     s.setTravelling(false)
     s.say(`${topic.title} — ${levelName[topic.level].toLowerCase()} in ${graph.get(topic.domain)?.title ?? topic.domain}.`)
-    useKnowledge.getState().touch(topic.id)
+    const k = useKnowledge.getState()
+    k.touch(topic.id)
+    if (previous >= 0 && graph.edgeBetween(previous, idx) >= 0) k.addPath(graph.topics[previous].id, topic.id)
     ripples.spawn(w.basePosition(idx), w.size[idx], 1)
     arriveTimer = setTimeout(() => w.setRoute([]), 1800)
   }
@@ -193,6 +195,7 @@ function travel(focusId: string | null, via: string, quiet = false) {
               if (edges[k] >= 0) {
                 w.lightRouteEdge(edges[k])
                 w.routeEdges.add(edges[k])
+                useKnowledge.getState().addPath(route[k], route[k + 1])
               }
             }
           }
@@ -228,7 +231,12 @@ export function startDirector() {
     if (s.previewId !== prev.previewId) w.setPreview(s.previewId ? graph.idx(s.previewId) : -1)
     if (s.showMap !== prev.showMap) w.setMapLayer(s.showMap)
   })
-  useKnowledge.subscribe(() => w.setKnowledge(knowledgeOf))
+  const syncKnowledge = () => {
+    w.setKnowledge(knowledgeOf)
+    w.setTravelled(useKnowledge.getState().paths)
+  }
+  syncKnowledge()
+  useKnowledge.subscribe(syncKnowledge)
 }
 
 /** Opening shot: from deep space into the overview while the universe ignites. */

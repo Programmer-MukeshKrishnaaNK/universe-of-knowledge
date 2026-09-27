@@ -1,5 +1,6 @@
 import { papers } from '../../data'
 import type { PaperKind, Topic } from '../../data/schema'
+import { PaperExplain } from './PaperExplain'
 
 const KIND_LABEL: Record<PaperKind, string> = {
   foundational: 'Foundational papers',
@@ -39,6 +40,7 @@ export function Research({ topic }: { topic: Topic }) {
                       <span className="paper-why">Why it matters.</span> {p.whyItMatters}
                     </p>
                     <p className="paper-level">{LEVEL[p.background]}</p>
+                    <PaperExplain topicId={topic.id} paperId={p.id} />
                     <p className="paper-links">
                       {p.arxiv && (
                         <a href={`https://arxiv.org/abs/${p.arxiv}`} target="_blank" rel="noreferrer">

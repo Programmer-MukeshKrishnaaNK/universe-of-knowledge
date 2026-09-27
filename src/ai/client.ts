@@ -3,7 +3,7 @@
  * backend holds keys and chooses the provider.
  */
 
-export type ExplainMode = 'simple' | 'analogy' | 'math' | 'eli15' | 'deeper' | 'confused' | 'question'
+export type ExplainMode = 'simple' | 'analogy' | 'math' | 'eli15' | 'deeper' | 'confused' | 'question' | 'next' | 'paper'
 
 export const EXPLAIN_MODES: { mode: ExplainMode; label: string }[] = [
   { mode: 'simple', label: 'Explain simply' },
@@ -12,12 +12,14 @@ export const EXPLAIN_MODES: { mode: ExplainMode; label: string }[] = [
   { mode: 'math', label: 'Explain the mathematics' },
   { mode: 'deeper', label: 'Go deeper' },
   { mode: 'confused', label: 'I don’t understand this' },
+  { mode: 'next', label: 'What should I learn next?' },
 ]
 
 export interface ExplainRequest {
   topicId: string
   mode: ExplainMode
   question?: string
+  paperId?: string
   depth: string
   known: string[]
   history?: { role: 'user' | 'assistant'; content: string }[]

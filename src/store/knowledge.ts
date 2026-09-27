@@ -11,6 +11,9 @@ import { safeStorage } from './safeStorage'
 interface KnowledgeStore {
   userId: string
   entries: Record<string, UserKnowledge>
+  /** Connections the learner has actually travelled, as "a|b" (sorted) keys. */
+  paths: string[]
+  addPath: (a: string, b: string) => void
   set: (topicId: string, state: KnowledgeState | null) => void
   touch: (topicId: string) => void
   reset: () => void
@@ -21,6 +24,12 @@ export const useKnowledge = create<KnowledgeStore>()(
     (set, get) => ({
       userId: 'local',
       entries: {},
+      paths: [],
+      addPath: (a, b) => {
+        const key = a < b ? `${a}|${b}` : `${b}|${a}`
+        const paths = get().paths
+        if (!paths.includes(key)) set({ paths: [...paths, key].slice(-500) })
+      },
       set: (topicId, state) => {
         const entries = { ...get().entries }
         if (state === null) delete entries[topicId]
@@ -49,7 +58,7 @@ export const useKnowledge = create<KnowledgeStore>()(
           },
         })
       },
-      reset: () => set({ entries: {} }),
+      reset: () => set({ entries: {}, paths: [] }),
     }),
     { name: 'uok.knowledge.v1', storage: createJSONStorage(() => safeStorage) },
   ),

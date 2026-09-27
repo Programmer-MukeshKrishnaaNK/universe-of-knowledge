@@ -53,8 +53,9 @@ void main() {
   vAlpha = rev * mix(1.0, 0.3, fog) * mix(0.45, 1.0, fade);
   vUv = uv;
   vColor = iColor;
-  float known = step(0.5, iKnown);
-  vEmph = iEmph * mix(1.0, mix(0.5, 1.15, known), uMap);
+  // With "Your map" on, what you haven't met yet recedes; what you know steps forward.
+  float known = step(1.5, iKnown);
+  vEmph = iEmph * mix(1.0, mix(0.55, 1.15, known), uMap);
   vHover = iHover;
   vFocus = iFocus;
   vLevel = iLevel;
@@ -116,15 +117,17 @@ void main() {
   float focusRing = ringAt(r, cr * (2.45 + 0.1 * breathe), w * 1.4) * vFocus * (0.55 + 0.25 * breathe);
   float hoverRing = ringAt(r, cr * 1.42, w) * vHover * (1.0 - vFocus);
 
-  // Personal knowledge layer.
+  // Personal knowledge layer — always faintly present, brought forward by "Your map".
   float k = vKnown;
-  float understood = step(2.5, k) * (1.0 - step(3.5, k));
+  float discovered = step(0.5, k) * (1.0 - step(1.5, k));
   float learning = step(1.5, k) * (1.0 - step(2.5, k));
+  float understood = step(2.5, k) * (1.0 - step(3.5, k));
   float review = step(3.5, k) * (1.0 - step(4.5, k));
   float want = step(4.5, k);
   float kr = ringAt(r, cr * 1.28, w * 1.3);
-  float knowRing = kr * (understood + learning * step(ang, 0.5) + review * step(0.5, fract(ang * 8.0)) + want * step(0.6, fract(ang * 16.0)));
-  vec3 knowCol = mix(vec3(1.0, 0.82, 0.55), vec3(0.75, 0.9, 1.0), want);
+  float knowRing = kr * (understood + learning * step(ang, 0.5) + review * step(0.5, fract(ang * 8.0)) + want * step(0.6, fract(ang * 16.0)) + discovered * 0.35 * step(0.7, fract(ang * 40.0)));
+  vec3 knowCol = mix(vec3(1.0, 0.82, 0.55), vec3(0.75, 0.9, 1.0), want + discovered);
+  float mapVis = 0.38 + 0.62 * uMap;
 
   vec3 col = vec3(0.0);
   col += coreCol * core * (0.3 + 1.0 * e);
@@ -132,7 +135,7 @@ void main() {
   col += vColor * (orbit + outer) * (0.25 + 0.9 * e);
   col += vec3(1.0) * focusRing * 0.7;
   col += mix(vColor, vec3(1.0), 0.6) * hoverRing * 0.75;
-  col += knowCol * knowRing * uMap * 0.9;
+  col += knowCol * knowRing * mapVis * 0.9;
 
   float a = core * (0.55 + 0.45 * e);
   // Premultiplied "over": the core occludes lines behind it, the halo adds light.
@@ -149,9 +152,11 @@ attribute float aFlow;
 attribute float aKind;
 attribute float aLen;
 attribute float aGrow;
+attribute float aTravel;
 attribute vec3 aColor;
 
 varying float vGrow;
+varying float vTravel;
 varying float vT;
 varying float vEmph;
 varying float vFlow;
@@ -169,6 +174,7 @@ void main() {
   vKind = aKind;
   vLen = aLen;
   vGrow = aGrow;
+  vTravel = aTravel;
   vColor = aColor;
   vFog = smoothstep(420.0, 1200.0, -mv.z);
 }
@@ -178,6 +184,7 @@ export const edgeFragment = /* glsl */ `
 uniform float uTime;
 uniform float uReveal;
 uniform float uMotion;
+uniform float uMap;
 
 varying float vT;
 varying float vEmph;
@@ -186,6 +193,7 @@ varying float vKind;
 varying float vLen;
 varying float vFog;
 varying float vGrow;
+varying float vTravel;
 varying vec3 vColor;
 
 void main() {
@@ -216,6 +224,8 @@ void main() {
   float a = vEmph * ends * dotted * kindGain * drawn;
   vec3 col = vColor * (0.62 * a + signal * vFlow * ends * drawn);
   col += mix(vColor, vec3(1.0), 0.6) * front * 1.4 * step(0.3, vEmph);
+  // Your own paths: a faint warm thread along every connection you have travelled.
+  col += vec3(1.0, 0.72, 0.42) * vTravel * ends * (0.05 + 0.3 * uMap);
   col *= uReveal * mix(1.0, 0.3, vFog);
   gl_FragColor = vec4(col, 1.0);
 }

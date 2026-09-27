@@ -109,6 +109,11 @@ export function Controls() {
           </div>
         </nav>
       )}
+      {showMap && !help && (
+        <p className="map-key" role="status">
+          {understood ? 'Warm rings: what you understand · half rings: learning · warm threads: paths you’ve travelled' : 'Mark topics as understood and your map will light up here.'}
+        </p>
+      )}
       {help && (
         <div className="help" role="dialog" aria-label="How to explore">
           <p><b>Drag</b> to orbit · <b>Right-drag</b> or <b>Shift-drag</b> to pan · <b>Scroll</b> or pinch to zoom</p>
@@ -178,4 +183,31 @@ export function useKeyboardNavigation() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+}
+
+const DEPTHS = ['Domain', 'Field', 'Concept', 'Deep concept', 'Frontier']
+
+/**
+ * An altimeter for knowledge: how deep into a region you have travelled.
+ * Research-level topics sit at the frontier.
+ */
+export function DepthMeter() {
+  const focusId = useExplore((s) => s.focusId)
+  const t = graph.get(focusId)
+  if (!t) return null
+  const depth = t.difficulty === 'research' ? 4 : t.level
+  return (
+    <div className="depth-meter" aria-label={`Depth: ${DEPTHS[depth]}`} role="img">
+      <span className="dm-rail" aria-hidden="true">
+        <span className="dm-marker" style={{ top: `${(depth / (DEPTHS.length - 1)) * 100}%` }} />
+      </span>
+      <ol aria-hidden="true">
+        {DEPTHS.map((d, i) => (
+          <li key={d} className={i === depth ? 'is-here' : i < depth ? 'is-above' : ''}>
+            {d}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
 }

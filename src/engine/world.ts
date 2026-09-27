@@ -69,6 +69,7 @@ export class World {
   readonly edgeVertEmph: Float32Array
   readonly edgeVertFlow: Float32Array
   readonly edgeVertGrow: Float32Array
+  readonly edgeVertTravel: Float32Array
   readonly edgeVertColor: Float32Array
   readonly edgeVertT: Float32Array
   readonly edgeVertKind: Float32Array
@@ -97,6 +98,7 @@ export class World {
   changed = { pos: true, emph: true, known: true }
   edgeDirty = true
   knownDirty = true
+  travelDirty = true
 
   constructor(graph: KnowledgeGraph, layout: Layout) {
     this.graph = graph
@@ -143,6 +145,7 @@ export class World {
     this.edgeVertEmph = new Float32Array(m * vpe)
     this.edgeVertFlow = new Float32Array(m * vpe)
     this.edgeVertGrow = new Float32Array(m * vpe).fill(1)
+    this.edgeVertTravel = new Float32Array(m * vpe)
     this.edgeVertColor = new Float32Array(m * vpe * 3)
     this.edgeVertT = new Float32Array(m * vpe)
     this.edgeVertKind = new Float32Array(m * vpe)
@@ -203,6 +206,19 @@ export class World {
       this.known[i] = s ? KNOWN_CODE[s] : 0
     })
     this.knownDirty = true
+  }
+
+  /** Mark the connections this learner has travelled (keys are "a|b", sorted). */
+  setTravelled(keys: string[]) {
+    const set = new Set(keys)
+    const vpe = EDGE_SEGMENTS + 1
+    const g = this.graph
+    for (let e = 0; e < this.m; e++) {
+      const a = g.topics[g.edgeSource[e]].id, b = g.topics[g.edgeTarget[e]].id
+      const v = set.has(a < b ? `${a}|${b}` : `${b}|${a}`) ? 1 : 0
+      this.edgeVertTravel.fill(v, e * vpe, (e + 1) * vpe)
+    }
+    this.travelDirty = true
   }
 
   setMapLayer(on: boolean) {

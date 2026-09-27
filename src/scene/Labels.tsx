@@ -148,6 +148,7 @@ export function Labels() {
       placed.push(zone((q.x * 0.5 + 0.5) * W - rad, (-q.y * 0.5 + 0.5) * H - rad, rad * 2, rad * 2, i))
     }
     if (hasFocus) {
+      if (!compact) placed.push(zone(0, H / 2 - 85, 150, 170)) // depth meter
       const inset = panelInset()
       if (inset.x) placed.push(zone(W - inset.x, 0, inset.x, H))
       if (inset.y) placed.push(zone(0, H - inset.y, W, inset.y))

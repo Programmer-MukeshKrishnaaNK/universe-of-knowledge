@@ -39,8 +39,11 @@ export function springTo(state: Float32Array, i: number, vel: Float32Array, targ
 
 let reduced = false
 if (typeof window !== 'undefined' && window.matchMedia) {
+  // `?motion=reduced` forces calm transitions regardless of the OS setting.
+  const forced = new URLSearchParams(window.location.search).get('motion') === 'reduced'
   const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-  reduced = mq.matches
-  mq.addEventListener?.('change', (e) => (reduced = e.matches))
+  reduced = forced || mq.matches
+  mq.addEventListener?.('change', (e) => (reduced = forced || e.matches))
+  if (forced) document.documentElement.dataset.motion = 'reduced'
 }
 export const prefersReducedMotion = () => reduced
