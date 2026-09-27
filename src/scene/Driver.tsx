@@ -167,7 +167,7 @@ export function Driver() {
       if (v.z > 1) continue
       const sx = (v.x * 0.5 + 0.5) * viewport.width
       const sy = (-v.y * 0.5 + 0.5) * h
-      const coreR = (w.size[i] * 0.84 * focal) / depth
+      const coreR = (w.visualSize(i) * 0.84 * focal) / depth
       const radius = Math.max(minRadius, coreR * 1.5)
       const d = Math.hypot(sx - px, sy - py)
       if (d > radius) continue

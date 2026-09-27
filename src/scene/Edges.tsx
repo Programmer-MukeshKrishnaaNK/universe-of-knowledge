@@ -16,6 +16,8 @@ export function Edges() {
     const emph = new BufferAttribute(w.edgeVertEmph, 1).setUsage(DynamicDrawUsage)
     const flow = new BufferAttribute(w.edgeVertFlow, 1).setUsage(DynamicDrawUsage)
     const len = new BufferAttribute(w.edgeVertLen, 1).setUsage(DynamicDrawUsage)
+    const grow = new BufferAttribute(w.edgeVertGrow, 1).setUsage(DynamicDrawUsage)
+    geo.setAttribute('aGrow', grow)
     geo.setAttribute('position', pos)
     geo.setAttribute('aEmph', emph)
     geo.setAttribute('aFlow', flow)
@@ -43,7 +45,7 @@ export function Edges() {
     const lines = new LineSegments(geo, material)
     lines.frustumCulled = false
     lines.renderOrder = 2
-    return { lines, material, attrs: [pos, emph, flow, len] }
+    return { lines, material, attrs: [pos, emph, flow, len, grow] }
   }, [])
 
   useFrame((state) => {

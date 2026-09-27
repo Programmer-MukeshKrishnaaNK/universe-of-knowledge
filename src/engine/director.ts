@@ -77,9 +77,15 @@ function focusDistance(idx: number) {
   return Math.max(dW, dH, 14)
 }
 
-function destinationFor(w: World, idx: number) {
+function destinationFor(w: World, idx: number, previous = -1) {
   const look = w.basePosition(idx)
   const from = rig.position.clone().sub(rig.flight ? look : rig.target)
+  if (from.lengthSq() > 1e-6) from.normalize()
+  // Lean the arrival into the direction of travel, so going somewhere feels like moving forward.
+  if (previous >= 0 && previous !== idx) {
+    const travelled = look.clone().sub(w.basePosition(previous))
+    if (travelled.lengthSq() > 1) from.addScaledVector(travelled.normalize().negate(), 0.35).normalize()
+  }
   const s = new Spherical().setFromVector3(from.lengthSq() > 1e-6 ? from : new Vector3(0, 0.4, 1))
   s.radius = focusDistance(idx)
   s.phi = clamp(s.phi * 0.4 + 1.12 * 0.6, 0.8, 1.32)
@@ -128,12 +134,12 @@ function travel(focusId: string | null, via: string, quiet = false) {
   if (idx < 0) return
   lastFramed = { ...viewport }
   const topic = graph.topics[idx]
-  const { look, position } = destinationFor(w, idx)
-  const basis = { ...CameraRig.basisFor(position, look), stretch: stretch() }
   const previous = w.focus
+  const { look, position } = destinationFor(w, idx, quiet ? -1 : previous)
+  const basis = { ...CameraRig.basisFor(position, look), stretch: stretch(), distance: position.distanceTo(look) }
 
   // The knowledge system responds before the camera moves.
-  if (!quiet) ripples.spawn(w.nodePosition(idx), w.size[idx], 0)
+  if (!quiet && via !== 'back') ripples.spawn(w.nodePosition(idx), w.size[idx], 0)
   w.setFocus(idx, basis)
   rig.shiftXT = inset.x / 2 / viewport.width
   rig.shiftYT = inset.y / 2 / viewport.height
@@ -262,6 +268,8 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
         world?.update(1 / 30)
         rig.update(1 / 30, viewport)
       }
+      // Make the next rendered frame upload everything the manual steps changed.
+      if (world) world.posDirty = world.emphDirty = world.knownDirty = true
     },
   }
 }

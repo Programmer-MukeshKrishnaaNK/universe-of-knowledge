@@ -86,7 +86,7 @@ export function Labels() {
 
       let target: number
       if (lvl === 0) {
-        target = smooth(14, 40, d) * (hasFocus ? (i === w.focus ? 0.8 : 0.4) : 0.78) * (t.mapped === false ? 0.62 : 1)
+        target = smooth(14, 40, d) * (hasFocus ? (i === w.focus ? 0.8 : focusNeighbors?.has(i) ? 0.4 : 0.16) : 0.78) * (t.mapped === false ? 0.62 : 1)
         priority += hasFocus ? 0 : 30
       } else {
         const [far, near] = BANDS[lvl]
@@ -117,7 +117,7 @@ export function Labels() {
       q.copy(p).project(camera)
       const depth = Math.max(0.1, d)
       const fontPx = (s * focal) / depth
-      const nodePx = (w.size[i] * (lvl === 0 ? 0.95 : 0.78) * focal) / depth
+      const nodePx = (w.visualSize(i) * (lvl === 0 ? 0.95 : 0.78) * focal) / depth
       list.push({
         i,
         target: q.z > 1 ? 0 : target,
@@ -135,17 +135,17 @@ export function Labels() {
     list.sort((a, b) => b.priority - a.priority)
     const W = viewport.width
     const H = viewport.height
-    const zone = (x: number, y: number, w: number, h: number): Candidate => ({ i: -1, target: 1, priority: 0, x: x + w / 2, y, w, h, s: 0 })
+    const zone = (x: number, y: number, w: number, h: number, owner = -1): Candidate => ({ i: owner, target: 1, priority: 0, x: x + w / 2, y, w, h, s: 0 })
     const placed: Candidate[] = [zone(0, 0, W, 50)]
     // Bright cores (domains, the focus) are obstacles too — no label under a sun.
     for (let i = 0; i < graph.size; i++) {
-      if (graph.topics[i].level !== 0 && i !== w.focus) continue
+      if ((graph.topics[i].level !== 0 || w.emph[i] < 0.4) && i !== w.focus) continue
       w.nodePosition(i, q)
       const depth = q.distanceTo(camera.position)
       q.project(camera)
       if (q.z > 1) continue
-      const rad = (w.size[i] * 1.1 * focal) / Math.max(depth, 0.1)
-      placed.push(zone((q.x * 0.5 + 0.5) * W - rad, (-q.y * 0.5 + 0.5) * H - rad, rad * 2, rad * 2))
+      const rad = (w.visualSize(i) * 1.1 * focal) / Math.max(depth, 0.1)
+      placed.push(zone((q.x * 0.5 + 0.5) * W - rad, (-q.y * 0.5 + 0.5) * H - rad, rad * 2, rad * 2, i))
     }
     if (hasFocus) {
       const inset = panelInset()
@@ -155,7 +155,7 @@ export function Labels() {
     for (const c of list) {
       if (c.target > 0.05) {
         const pad = 6
-        const hit = placed.some((o) => Math.abs(o.x - c.x) * 2 < o.w + c.w + pad && Math.abs(o.y + o.h / 2 - (c.y + c.h / 2)) * 2 < o.h + c.h + pad * 0.5)
+        const hit = placed.some((o) => o.i !== c.i && Math.abs(o.x - c.x) * 2 < o.w + c.w + pad && Math.abs(o.y + o.h / 2 - (c.y + c.h / 2)) * 2 < o.h + c.h + pad * 0.5)
         if (hit && c.priority < 180) c.target = 0
         else placed.push(c)
       }
@@ -168,7 +168,7 @@ export function Labels() {
       label.fillOpacity = o
       label.scale.setScalar(c.s)
       w.nodePosition(c.i, p)
-      const offset = w.size[c.i] * (graph.topics[c.i].level === 0 ? 0.95 : 0.78) + c.s * 0.55
+      const offset = w.visualSize(c.i) * (graph.topics[c.i].level === 0 ? 0.95 : 0.78) + c.s * 0.55
       label.position.copy(p).addScaledVector(up, -offset)
       label.quaternion.copy(camera.quaternion)
     }

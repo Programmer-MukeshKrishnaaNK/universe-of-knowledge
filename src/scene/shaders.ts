@@ -36,7 +36,9 @@ void main() {
   float rev = smoothstep(iDelay, iDelay + 0.16, uReveal);
   vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
   float depth = max(-mv.z, 0.001);
-  float s = iSize * (0.8 + 0.2 * iEmph) * (1.0 + 0.16 * iHover + 0.1 * iFocus) * (0.35 + 0.65 * rev) * 4.2;
+  // The destination is always the dominant object in view, whatever its level.
+  float base = mix(iSize, max(iSize * 1.3, 1.85), iFocus);
+  float s = base * (0.8 + 0.2 * iEmph) * (1.0 + 0.16 * iHover) * (0.35 + 0.65 * rev) * 4.2;
 
   // Keep far nodes as crisp points instead of sub-pixel shimmer.
   float px = s * projectionMatrix[1][1] * uViewH * 0.5 / depth;
@@ -146,8 +148,10 @@ attribute float aEmph;
 attribute float aFlow;
 attribute float aKind;
 attribute float aLen;
+attribute float aGrow;
 attribute vec3 aColor;
 
+varying float vGrow;
 varying float vT;
 varying float vEmph;
 varying float vFlow;
@@ -164,6 +168,7 @@ void main() {
   vFlow = aFlow;
   vKind = aKind;
   vLen = aLen;
+  vGrow = aGrow;
   vColor = aColor;
   vFog = smoothstep(420.0, 1200.0, -mv.z);
 }
@@ -180,21 +185,37 @@ varying float vFlow;
 varying float vKind;
 varying float vLen;
 varying float vFog;
+varying float vGrow;
 varying vec3 vColor;
 
 void main() {
   float ends = smoothstep(0.0, 0.09, vT) * smoothstep(1.0, 0.91, vT);
+  bool sideways = vKind > 1.5;
   // Sideways relationships are drawn as a quiet dotted line.
-  float dotted = vKind > 1.5 ? 0.35 + 0.65 * step(0.45, fract(vT * vLen / 1.1)) : 1.0;
-  float kindGain = vKind < 0.5 ? 1.0 : (vKind < 1.5 ? 0.9 : 0.75);
+  float dotted = sideways ? 0.35 + 0.65 * step(0.45, fract(vT * vLen / 1.1)) : 1.0;
+  float kindGain = vKind < 0.5 ? 0.85 : (vKind < 1.5 ? 1.0 : 0.75);
 
-  // Signals flow from prerequisite to what it enables, parent to child.
-  float spacing = max(1.0, vLen / 8.0);
-  float ph = fract(vT * spacing - uTime * 0.32 * uMotion);
-  float pulse = exp(-pow((ph - 0.5) * 11.0, 2.0));
+  // Draw-on: a waking connection grows from the node that woke it.
+  float g = abs(vGrow);
+  float coord = vGrow >= 0.0 ? vT : 1.0 - vT;
+  float drawn = smoothstep(g + 0.015, g - 0.05, coord);
+  float front = (1.0 - step(0.999, g)) * exp(-pow((coord - g) * 24.0, 2.0));
 
-  float a = vEmph * ends * dotted * kindGain;
-  vec3 col = vColor * (0.62 * a + pulse * vFlow * ends * 1.35);
+  float t = uTime * uMotion;
+  float signal;
+  if (sideways) {
+    // Related ideas breathe together rather than flow.
+    signal = 0.35 * (0.5 + 0.5 * sin(t * 1.3 + vT * 5.0));
+  } else {
+    // Dependency flows: prerequisite → what it enables, parent → child.
+    float spacing = max(1.0, vLen / 8.0);
+    float ph = fract(vT * spacing - t * 0.32);
+    signal = exp(-pow((ph - 0.5) * 11.0, 2.0)) * 1.35;
+  }
+
+  float a = vEmph * ends * dotted * kindGain * drawn;
+  vec3 col = vColor * (0.62 * a + signal * vFlow * ends * drawn);
+  col += mix(vColor, vec3(1.0), 0.6) * front * 1.4 * step(0.3, vEmph);
   col *= uReveal * mix(1.0, 0.3, vFog);
   gl_FragColor = vec4(col, 1.0);
 }

@@ -4,6 +4,8 @@ import { clamp, damp, prefersReducedMotion, smootherstep } from '../lib/motion'
 interface Flight {
   t: number
   duration: number
+  /** Anticipation: a short backward breath before the journey starts. */
+  wind: { from: Vector3; to: Vector3; duration: number; t: number } | null
   path: Curve<Vector3>
   look: Curve<Vector3> | null
   look0: Vector3
@@ -40,6 +42,10 @@ export class CameraRig {
   private zoomNdc = { x: 0, y: 0 }
   dragging = false
   flight: Flight | null = null
+  /** Bank (roll) into turns while flying, radians. */
+  private roll = 0
+  private yawRate = 0
+  private readonly prevForward = new Vector3(0, 0, -1)
   private idle = 0
   private drift = 0
   minRadius = 5
@@ -117,9 +123,16 @@ export class CameraRig {
     const reduced = prefersReducedMotion()
 
     let path: Curve<Vector3>
+    let wind: Flight['wind'] = null
     if (reduced) {
       path = new CubicBezierCurve3(p0, p0.clone().lerp(position, 0.33), p0.clone().lerp(position, 0.66), position.clone())
     } else {
+      // Major journeys begin with a breath: ease back a little, pause, then go.
+      if (dist > 28 && !this.flight) {
+        const away = p0.clone().sub(look0).normalize().multiplyScalar(Math.min(dist * 0.035, 5.5))
+        wind = { from: p0.clone(), to: p0.clone().add(away), duration: 0.34, t: 0 }
+        p0.copy(wind.to)
+      }
       // Rise gently above the plane of travel, then glide in along the final view direction.
       const lift = UP.clone().multiplyScalar(Math.min(dist * 0.2, 46))
       const back = p0.clone().sub(look0).normalize().multiplyScalar(Math.min(dist * 0.12, 26))
@@ -132,6 +145,7 @@ export class CameraRig {
     this.flight = {
       t: 0,
       duration: base / (opts.speed ?? 1),
+      wind,
       path,
       look: null,
       look0,
@@ -160,6 +174,7 @@ export class CameraRig {
     this.flight = {
       t: 0,
       duration: clamp(1.6 + length / 150 + positions.length * 0.35, 2.2, 5.4),
+      wind: null,
       path,
       look,
       look0,
@@ -181,19 +196,35 @@ export class CameraRig {
 
     if (this.flight) {
       const f = this.flight
-      f.t = Math.min(1, f.t + dt / f.duration)
-      const e = smootherstep(f.t)
-      cam.position.copy(f.path.getPointAt(e, tmp))
-      // The gaze leads the body: it settles on the destination before we arrive.
-      const le = smootherstep(Math.min(1, f.t * 1.3))
-      const look = f.look ? f.look.getPointAt(Math.min(1, e * 1.08), tmp2) : tmp2.copy(f.look0).lerp(f.look1, le)
-      cam.up.copy(UP)
-      cam.lookAt(look)
+      if (f.wind && f.wind.t < f.wind.duration) {
+        // Anticipation — the gaze starts to turn while the body draws back.
+        f.wind.t += dt
+        const u = smootherstep(f.wind.t / f.wind.duration)
+        cam.position.copy(f.wind.from).lerp(f.wind.to, u)
+        cam.up.copy(UP)
+        cam.lookAt(tmp2.copy(f.look0).lerp(f.look1, u * 0.05))
+      } else {
+        f.t = Math.min(1, f.t + dt / f.duration)
+        const e = smootherstep(f.t)
+        cam.position.copy(f.path.getPointAt(e, tmp))
+        // The gaze leads the body: it settles on the destination before we arrive.
+        const le = smootherstep(Math.min(1, f.t * 1.3))
+        const look = f.look ? f.look.getPointAt(Math.min(1, e * 1.08), tmp2) : tmp2.copy(f.look0).lerp(f.look1, 0.05 + 0.95 * le)
+        cam.up.copy(UP)
+        cam.lookAt(look)
+      }
+      this.bank(cam, dt, reduced)
       f.onProgress?.(f.t)
       if (f.t >= 1) {
         this.target.copy(f.look1)
         this.spherical.setFromVector3(tmp.copy(cam.position).sub(f.look1))
         this.flight = null
+        // Settle: carry a whisper of momentum into the orbit instead of stopping dead.
+        if (!reduced) {
+          this.vTheta = clamp(-this.yawRate * 0.22, -0.045, 0.045)
+          this.zoomNdc.x = this.zoomNdc.y = 0
+          this.vZoom = -0.05
+        }
         f.onArrive?.()
       }
     } else {
@@ -244,6 +275,9 @@ export class CameraRig {
         this.spherical.theta += this.drift * dt * 0.018
       }
 
+      this.roll = damp(this.roll, 0, 3, dt)
+      this.yawRate = damp(this.yawRate, 0, 6, dt)
+      this.camera!.getWorldDirection(this.prevForward)
       this.apply()
     }
 
@@ -263,6 +297,18 @@ export class CameraRig {
     this.camera.position.setFromSpherical(this.spherical).add(this.target)
     this.camera.up.copy(UP)
     this.camera.lookAt(this.target)
+    if (Math.abs(this.roll) > 1e-4) this.camera.rotateZ(this.roll)
+  }
+
+  /** Bank gently into turns, like a craft rather than a tripod. */
+  private bank(cam: PerspectiveCamera, dt: number, reduced: boolean) {
+    const fwd = cam.getWorldDirection(tmp)
+    const yaw = this.prevForward.x * fwd.z - this.prevForward.z * fwd.x
+    this.prevForward.copy(fwd)
+    this.yawRate = damp(this.yawRate, yaw / Math.max(dt, 1e-3), 6, dt)
+    const target = reduced ? 0 : clamp(-this.yawRate * 0.14, -0.075, 0.075) // right turn → right wing down
+    this.roll = damp(this.roll, target, 3.5, dt)
+    cam.rotateZ(this.roll)
   }
 
   /** Current camera → target direction as a basis for arranging a focus. */

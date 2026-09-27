@@ -3,7 +3,7 @@ import { domainColor } from '../data'
 import type { KnowledgeState } from '../data/schema'
 import type { KnowledgeGraph } from '../graph/buildGraph'
 import type { Layout } from '../graph/layout'
-import { damp, springTo } from '../lib/motion'
+import { damp, prefersReducedMotion, springTo } from '../lib/motion'
 
 /** Edge curves are sampled at this many segments. */
 export const EDGE_SEGMENTS = 22
@@ -29,6 +29,8 @@ export interface ViewBasis {
   forward: Vector3
   /** Horizontal / vertical stretch of the constellation ellipse. */
   stretch?: { x: number; y: number }
+  /** Camera distance at arrival — clearing works in screen angle, not world distance. */
+  distance?: number
 }
 
 /**
@@ -59,10 +61,14 @@ export class World {
   readonly edgeEmphT: Float32Array
   readonly edgeFlow: Float32Array
   readonly edgeFlowT: Float32Array
+  /** 0..1 draw-on progress, and which end it grows from (+1 source, -1 target). */
+  readonly edgeGrow: Float32Array
+  readonly edgeGrowDir: Float32Array
   /** Per-vertex buffers for the edge geometry. */
   readonly edgeVerts: Float32Array
   readonly edgeVertEmph: Float32Array
   readonly edgeVertFlow: Float32Array
+  readonly edgeVertGrow: Float32Array
   readonly edgeVertColor: Float32Array
   readonly edgeVertT: Float32Array
   readonly edgeVertKind: Float32Array
@@ -130,10 +136,13 @@ export class World {
     this.edgeEmphT = new Float32Array(m)
     this.edgeFlow = new Float32Array(m)
     this.edgeFlowT = new Float32Array(m)
+    this.edgeGrow = new Float32Array(m).fill(1)
+    this.edgeGrowDir = new Float32Array(m).fill(1)
     const vpe = EDGE_SEGMENTS + 1
     this.edgeVerts = new Float32Array(m * vpe * 3)
     this.edgeVertEmph = new Float32Array(m * vpe)
     this.edgeVertFlow = new Float32Array(m * vpe)
+    this.edgeVertGrow = new Float32Array(m * vpe).fill(1)
     this.edgeVertColor = new Float32Array(m * vpe * 3)
     this.edgeVertT = new Float32Array(m * vpe)
     this.edgeVertKind = new Float32Array(m * vpe)
@@ -159,7 +168,8 @@ export class World {
 
   setFocus(idx: number, basis?: ViewBasis) {
     this.focus = idx
-    this.dimT = idx >= 0 ? 1 : 0
+    // The deeper the focus, the further the rest of the universe recedes.
+    this.dimT = idx >= 0 ? 0.8 + this.graph.topics[idx].level * 0.1 : 0
     this.arrange(basis)
     this.recompute()
   }
@@ -268,30 +278,30 @@ export class World {
       place(related, 270, 120, R * 1.05)
     }
 
-    // Clear the stage: anything crowding the line of sight slides sideways,
-    // in the view plane, so it can never drift towards the camera.
-    // Domain cores are included — a galaxy's heart must not eclipse the focus.
+    // Clear the stage: anything that would *appear* inside the constellation —
+    // in front of it or far behind it — slides sideways in the view plane, so
+    // nothing ever moves towards the camera. Measured in screen angle, because
+    // a galaxy core far behind can cover the same pixels as a neighbour in front.
     const { forward, right } = basis
-    const clear = R * 2.3
+    const D = basis.distance ?? R * 4
     for (let i = 0; i < this.n; i++) {
       if (taken.has(i)) continue
       const dx = this.base[i * 3] - fx, dy = this.base[i * 3 + 1] - fy, dz = this.base[i * 3 + 2] - fz
       const along = dx * forward.x + dy * forward.y + dz * forward.z
-      // Lateral offset from the camera→focus axis.
+      const isDomain = g.topics[i].level === 0
+      if (along < -D * 0.92) continue // behind the camera
+      if (along > (isDomain ? D * 3 : R * 2.5)) continue
       let lx = dx - forward.x * along, ly = dy - forward.y * along, lz = dz - forward.z * along
       const lat = Math.hypot(lx, ly, lz)
-      const inFront = along < 0
-      const isDomain = g.topics[i].level === 0
-      // Only nodes near the axis between camera and focus, or close behind it, matter.
-      if (along > R * 2.5 || (inFront && -along > R * 4.5)) continue
-      const reach = isDomain ? clear * 1.3 : clear
-      if (lat > reach) continue
+      const depth = Math.max(1, D + along)
+      const need = (isDomain ? R * 2.3 : R * 1.75) * (depth / D)
+      if (lat >= need) continue
       if (lat < 1e-3) {
         lx = right.x; ly = right.y; lz = right.z
       } else {
         lx /= lat; ly /= lat; lz /= lat
       }
-      const push = (reach - lat) * (isDomain || inFront ? 0.9 : 0.6)
+      const push = (need - lat) * (isDomain || along < 0 ? 1 : 0.7)
       this.target[i * 3] += lx * push
       this.target[i * 3 + 1] += ly * push
       this.target[i * 3 + 2] += lz * push
@@ -317,8 +327,10 @@ export class World {
       const t = g.topics[i]
       let e = BASE_EMPH[t.level] * (t.mapped === false ? 0.62 : 1)
       if (f >= 0) {
-        e = hop[i] === 0 ? 1 : hop[i] === 1 ? 0.96 : hop[i] === 2 ? 0.36 : t.domain === fDomain ? 0.2 : 0.1
-        if (t.level === 0) e = Math.max(e, 0.4)
+        const quiet = [0.14, 0.12, 0.1, 0.075][g.topics[f].level]
+        e = hop[i] === 0 ? 1 : hop[i] === 1 ? 0.96 : hop[i] === 2 ? 0.36 : t.domain === fDomain ? quiet * 2 : quiet
+        // Unrelated galaxy cores stay as faint landmarks — they must never outshine the focus.
+        if (t.level === 0) e = hop[i] >= 0 && hop[i] <= 1 ? Math.max(e, 0.5) : Math.max(e, 0.16)
       }
       this.emphT[i] = e
     }
@@ -364,6 +376,17 @@ export class World {
     }
 
     for (let i = 0; i < n; i++) this.hoverT[i] = i === this.hoverIdx || i === this.previewIdx ? 1 : 0
+
+    // Waking connections draw themselves outward from whatever woke them.
+    const origins = [f, this.hoverIdx, this.previewIdx].filter((x) => x >= 0)
+    const instant = prefersReducedMotion()
+    for (let e = 0; e < this.m; e++) {
+      if (this.edgeEmphT[e] < 0.5 || this.edgeEmph[e] > 0.35) continue
+      const s = g.edgeSource[e], t = g.edgeTarget[e]
+      const origin = origins.find((o) => o === s || o === t)
+      this.edgeGrowDir[e] = origin === undefined || origin === s ? 1 : -1
+      this.edgeGrow[e] = instant ? 1 : 0
+    }
     this.emphDirty = true
   }
 
@@ -401,6 +424,10 @@ export class World {
       for (let e = 0; e < this.m; e++) {
         this.edgeEmph[e] = damp(this.edgeEmph[e], this.edgeEmphT[e], 4, dt)
         this.edgeFlow[e] = damp(this.edgeFlow[e], this.edgeFlowT[e], 3, dt)
+        if (this.edgeGrow[e] < 1) {
+          this.edgeGrow[e] = Math.min(1, this.edgeGrow[e] + dt / 0.62)
+          moving = true
+        }
         if (Math.abs(this.edgeEmph[e] - this.edgeEmphT[e]) > 1e-3 || Math.abs(this.edgeFlow[e] - this.edgeFlowT[e]) > 1e-3) moving = true
       }
       this.edgeDirty = true
@@ -432,6 +459,7 @@ export class World {
       const qx = mx + (ox / ol) * bow, qy = my + (oy / ol) * bow, qz = mz + (oz / ol) * bow
       const em = this.edgeEmph[e]
       const fl = this.edgeFlow[e]
+      const gr = this.edgeGrowDir[e] * (this.edgeGrow[e] * 0.999 + 0.001)
       for (let k = 0; k < vpe; k++) {
         const u = k / EDGE_SEGMENTS
         const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u
@@ -441,10 +469,17 @@ export class World {
         this.edgeVerts[v * 3 + 2] = a * az + b * qz + c * bz
         this.edgeVertEmph[v] = em
         this.edgeVertFlow[v] = fl
+        this.edgeVertGrow[v] = gr
         this.edgeVertLen[v] = len
       }
     }
     this.edgeDirty = false
+  }
+
+  /** On-screen size of a node, matching the node shader (the focus is enlarged). */
+  visualSize(i: number) {
+    const s = this.size[i]
+    return s + (Math.max(s * 1.3, 1.85) - s) * this.focusAmt[i]
   }
 
   nodePosition(i: number, out = new Vector3()) {
