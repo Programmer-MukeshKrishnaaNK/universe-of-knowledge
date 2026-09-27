@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { search } from '../graph'
+import { graph, search } from '../graph'
 import { useExplore } from '../store/explore'
 
 /** Small, quiet, and it *navigates* — results are destinations, not a page. */
@@ -82,6 +82,11 @@ export function Search() {
       {open && (
         <ul className="search-results" id="search-results" role="listbox">
           {hits.length === 0 && <li className="search-empty">Not charted yet. Try a broader idea — every region connects to the core.</li>}
+          {hits.length > 0 && hits[0].score < 70 && (
+            <li className="search-note" role="presentation">
+              No exact match — the closest ideas in the universe:
+            </li>
+          )}
           {hits.map((h, i) => (
             <li
               key={h.topic.id}
@@ -97,6 +102,13 @@ export function Search() {
             >
               <span className="dot" data-domain={h.topic.domain} aria-hidden="true" />
               <span className="sr-title">{h.topic.title}</span>
+              <span className="sr-where">
+                {graph
+                  .lineage(h.topic.id)
+                  .slice(0, -1)
+                  .map((t) => t.title)
+                  .join(' › ') || 'A domain of knowledge'}
+              </span>
               <span className="sr-short">{h.topic.short}</span>
             </li>
           ))}

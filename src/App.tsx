@@ -5,6 +5,7 @@ import { Controls, HoverTip, Journey, LiveRegion, useKeyboardNavigation, Wordmar
 import { Fallback, hasWebGL } from './ui/Fallback'
 import { Intro } from './ui/Intro'
 import { Search } from './ui/Search'
+import { RouteLine } from './ui/RouteLine'
 
 const UniverseCanvas = lazy(() => import('./scene/UniverseCanvas'))
 const TopicPanel = lazy(() => import('./ui/panel/TopicPanel'))
@@ -71,6 +72,7 @@ export default function App() {
       <header className="topbar">
         <Wordmark />
         <Search />
+        <RouteLine />
       </header>
       <HoverTip />
       <Journey />

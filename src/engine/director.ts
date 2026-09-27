@@ -114,6 +114,7 @@ function travel(focusId: string | null, via: string, quiet = false) {
   if (!w || !rig.camera) return
   const store = useExplore.getState()
   clearTimeout(arriveTimer)
+  if (store.route) useExplore.setState({ route: null })
   const inset = panelInset()
 
   if (!focusId) {
@@ -181,17 +182,32 @@ function travel(focusId: string | null, via: string, quiet = false) {
       w.setRoute([])
       const lit = new Set<number>()
       const steps = edges.length
+      const start = fromId ? 1 : 0
+      const journey = { ids: route, reached: start }
+      useExplore.setState({ route: journey })
       rig.flyRoute(lookPoints, positions, {
         onProgress: (t) => {
           for (let k = 0; k < steps; k++) {
-            if (edges[k] >= 0 && !lit.has(k) && t >= (k + 0.35) / (steps + 0.5)) {
+            if (!lit.has(k) && t >= (k + 0.35) / (steps + 0.5)) {
               lit.add(k)
-              w.lightRouteEdge(edges[k])
-              w.routeEdges.add(edges[k])
+              if (edges[k] >= 0) {
+                w.lightRouteEdge(edges[k])
+                w.routeEdges.add(edges[k])
+              }
             }
           }
+          const reached = Math.min(route.length - 1, start + lit.size)
+          if (useExplore.getState().route === journey && journey.reached !== reached) {
+            journey.reached = reached
+            useExplore.setState({ route: { ...journey } })
+          }
         },
-        onArrive: arrive,
+        onArrive: () => {
+          useExplore.setState({ route: { ids: route, reached: route.length } })
+          const done = useExplore.getState().route
+          setTimeout(() => useExplore.getState().route === done && useExplore.setState({ route: null }), 2600)
+          arrive()
+        },
       })
       return
     }

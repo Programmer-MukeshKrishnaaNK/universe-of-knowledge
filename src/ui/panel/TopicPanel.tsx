@@ -4,6 +4,7 @@ import { graph } from '../../graph'
 import { useExplore, type Depth } from '../../store/explore'
 import { RichText, TopicLink } from '../RichText'
 import { Explain } from './Explain'
+import { Glance } from './Glance'
 import { KnowledgeControl } from './KnowledgeControl'
 import { Path } from './Path'
 import { Research } from './Research'
@@ -32,7 +33,8 @@ export default function TopicPanel() {
   const depth = useExplore((s) => s.depth)
   const setDepth = useExplore((s) => s.setDepth)
   const home = useExplore((s) => s.home)
-  const [expanded, setExpanded] = useState(false)
+  const reading = useExplore((s) => s.reading)
+  const setReading = useExplore((s) => s.setReading)
   const scroller = useRef<HTMLDivElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const [shownId, setShownId] = useState(focusId)
@@ -72,12 +74,20 @@ export default function TopicPanel() {
   const showTechnical = depth === 'technical'
 
   return (
-    <aside className={`panel ${open ? 'is-open' : ''} ${expanded ? 'is-expanded' : ''}`} aria-label="Topic" aria-hidden={!open}>
-      <button type="button" className="panel-handle" onClick={() => setExpanded((e) => !e)} aria-label={expanded ? 'Collapse topic panel' : 'Expand topic panel'}>
+    <aside className={`panel ${open ? 'is-open' : ''} ${reading ? 'is-reading' : 'is-glance'}`} aria-label="Topic" aria-hidden={!open}>
+      <button type="button" className="panel-handle" onClick={() => setReading(!reading)} aria-label={reading ? 'Back to the overview of this topic' : 'Read about this topic'}>
         <span />
       </button>
       {topic && (
-        <div className={`panel-scroll ${leaving ? 'is-leaving' : ''}`} ref={scroller} key={topic.id}>
+        <div
+          className={`panel-scroll ${leaving ? 'is-leaving' : ''}`}
+          ref={scroller}
+          key={topic.id}
+          onWheel={(e) => {
+            // Scrolling down on the glance is a request to read.
+            if (!reading && e.deltaY > 12) setReading(true)
+          }}
+        >
           <header className="panel-head">
             <nav className="lineage" aria-label="Where this lives">
               <button type="button" onClick={home}>
@@ -104,7 +114,8 @@ export default function TopicPanel() {
               {topic.title}
             </h2>
             <p className="lede">{topic.short}</p>
-            <div className="controls-row">
+            <Glance topic={topic} reading={reading} onRead={() => setReading(true)} />
+            <div className="controls-row reading-only">
               <div className="depth" role="radiogroup" aria-label="Depth of explanation">
                 {DEPTHS.map((d) => (
                   <button key={d.id} type="button" role="radio" aria-checked={depth === d.id} className={depth === d.id ? 'is-active' : ''} onClick={() => setDepth(d.id)}>
@@ -115,6 +126,9 @@ export default function TopicPanel() {
             </div>
             <Explain topicId={topic.id} />
           </header>
+
+          {reading && (
+          <div className="reading">
 
           {topic.mapped === false && (
             <p className="uncharted">This region of the universe is still being mapped. Its bridges to what is charted are already visible — follow them.</p>
@@ -197,6 +211,8 @@ export default function TopicPanel() {
           <Research topic={topic} />
           <KnowledgeControl topicId={topic.id} />
           <p className="panel-foot">Content is curated for this first region of the universe. Research links point to original sources.</p>
+          </div>
+          )}
         </div>
       )}
     </aside>

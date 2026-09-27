@@ -20,6 +20,10 @@ interface ExploreStore {
   travelling: boolean
   announce: string
   searchOpen: boolean
+  /** Arrival shows a glance; reading is the user's choice (kept while following links in the text). */
+  reading: boolean
+  /** A search journey in progress: the regions it passes through, and how many are behind us. */
+  route: { ids: string[]; reached: number } | null
 
   setPhase: (p: Phase, step?: string) => void
   travelTo: (id: string, via?: Via) => void
@@ -32,6 +36,7 @@ interface ExploreStore {
   setTravelling: (t: boolean) => void
   say: (msg: string) => void
   setSearchOpen: (o: boolean) => void
+  setReading: (r: boolean) => void
 }
 
 export const useExplore = create<ExploreStore>()((set, get) => ({
@@ -48,12 +53,14 @@ export const useExplore = create<ExploreStore>()((set, get) => ({
   travelling: false,
   announce: '',
   searchOpen: false,
+  reading: false,
+  route: null,
 
   setPhase: (phase, step) => set({ phase, loadingStep: step ?? get().loadingStep }),
   travelTo: (id, via = 'click') => {
     const { focusId, trail, travelNonce } = get()
     const nextTrail = via === 'back' ? trail : focusId && focusId !== id ? [...trail.filter((t) => t !== id), focusId].slice(-24) : trail
-    set({ focusId: id, trail: nextTrail, via, travelNonce: travelNonce + 1, previewId: null, hoverId: null })
+    set({ focusId: id, trail: nextTrail, via, travelNonce: travelNonce + 1, previewId: null, hoverId: null, reading: via === 'link' ? get().reading : false })
   },
   back: () => {
     const { trail, travelNonce } = get()
@@ -72,4 +79,5 @@ export const useExplore = create<ExploreStore>()((set, get) => ({
   setTravelling: (travelling) => set({ travelling }),
   say: (announce) => set({ announce }),
   setSearchOpen: (searchOpen) => set({ searchOpen }),
+  setReading: (reading) => set({ reading }),
 }))
