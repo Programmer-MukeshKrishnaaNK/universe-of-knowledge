@@ -29,9 +29,10 @@ export function ClusterGlows({ version }: { version: number }) {
       c.set(domainColor[t.domain] ?? '#cccccc').convertSRGBToLinear()
       pos.push(P[i * 3], P[i * 3 + 1], P[i * 3 + 2])
       col.push(c.r, c.g, c.b)
-      size.push(8 + Math.cbrt(members + 1) * 5.5)
+      size.push(5 + Math.cbrt(members + 1) * 3.6)
       seed.push(((i * 0.618) % 1) + 0.1)
-      alpha.push(Math.min(0.55, 0.16 + Math.log2(members + 2) * 0.05))
+      // Quiet: a hint of mass, not a coloured fog.
+      alpha.push(Math.min(0.2, 0.05 + Math.log2(members + 2) * 0.018))
     })
     const quad = new PlaneGeometry(2, 2)
     const geo = new InstancedBufferGeometry()

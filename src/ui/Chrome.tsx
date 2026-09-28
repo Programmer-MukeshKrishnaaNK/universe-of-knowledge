@@ -6,6 +6,7 @@ import { useKnowledge } from '../store/knowledge'
 import { hud } from './hud'
 import { OutlineTree } from './Fallback'
 import { QualityControl } from './Quality'
+import { MusicControl } from './Music'
 
 /** Top-left wordmark — also the way home. */
 export function Wordmark() {
@@ -128,6 +129,7 @@ export function Controls() {
           )}
         </div>
       )}
+      <MusicControl />
       <QualityControl />
       <button type="button" className={`ctl ${outline ? 'is-active' : ''}`} aria-expanded={outline} onClick={() => setOutline((o) => !o)} title="Browse every topic as a list">
         Outline

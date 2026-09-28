@@ -7,6 +7,7 @@ import { Fallback, hasWebGL } from './ui/Fallback'
 import { Intro } from './ui/Intro'
 import { Search } from './ui/Search'
 import { useQualityDetection } from './ui/Quality'
+import { initMusic } from './audio/controller'
 import { RouteLine } from './ui/RouteLine'
 
 const UniverseCanvas = lazy(() => import('./scene/UniverseCanvas'))
@@ -43,6 +44,7 @@ export default function App() {
   useKeyboardNavigation()
   useDeepLink()
   useQualityDetection()
+  useEffect(() => initMusic(), [])
 
   useEffect(() => {
     let cancelled = false
