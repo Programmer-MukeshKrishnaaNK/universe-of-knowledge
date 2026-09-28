@@ -63,14 +63,17 @@ export interface RegionLayoutResult {
 
 /** Estimated radius a domain with `count` concepts will occupy — used to space the galaxies. */
 export function estimateDomainRadius(count: number) {
-  return Math.max(38, LEAF_SPACING * Math.cbrt(count) * 1.9)
+  // Fitted to measured layouts: small domains are shells (~38), large ones grow ~n^0.21
+  // with a safety margin so galaxies never overlap.
+  if (count < 400) return Math.max(38, LEAF_SPACING * Math.cbrt(count) * 1.9)
+  return Math.max(60, 39 * Math.pow(count, 0.21) * 1.12)
 }
 
 /**
  * Domain anchors scaled so that large domains never overlap. For the curated
  * dataset (tens of concepts per domain) the scale is exactly 1.
  */
-export function scaledAnchors(counts: Record<string, number>): Record<string, [number, number, number]> {
+export function scaledAnchors(counts: Record<string, number>, radii: Record<string, number | undefined> = {}): Record<string, [number, number, number]> {
   const ids = Object.keys(DOMAIN_ANCHORS)
   let minGap = Infinity
   for (let a = 0; a < ids.length; a++)
@@ -78,7 +81,7 @@ export function scaledAnchors(counts: Record<string, number>): Record<string, [n
       const A = DOMAIN_ANCHORS[ids[a]], B = DOMAIN_ANCHORS[ids[b]]
       minGap = Math.min(minGap, Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]))
     }
-  const biggest = Math.max(...ids.map((id) => estimateDomainRadius(counts[id] ?? 0)))
+  const biggest = Math.max(...ids.map((id) => radii[id] ?? estimateDomainRadius(counts[id] ?? 0)))
   const scale = Math.max(1, (biggest * 2.3) / minGap)
   return Object.fromEntries(ids.map((id) => [id, DOMAIN_ANCHORS[id].map((v) => v * scale) as [number, number, number]]))
 }
@@ -158,7 +161,8 @@ export function layoutRegion(input: RegionLayoutInput): RegionLayoutResult {
         dx += ox * 1.1; dy += oy * 1.1; dz += oz * 1.1
       }
       radius = LEVEL_RADIUS[t.level] * (t.level === 1 ? 1 + total * 0.02 : 1 + Math.min(total, 12) * 0.035) * (0.85 + rand() * 0.3)
-      if (subR[i] > LEVEL_RADIUS[t.level]) radius += subR[i] * 1.1 // big subtrees need room
+      // Big subtrees need room: siblings on one shell must not overlap each other's clouds.
+      if (subR[i] > LEVEL_RADIUS[t.level]) radius += subR[i] * (1.1 + 0.8 * Math.sqrt(Math.max(0, total - 1)))
     } else {
       // Large families: fibonacci ball, flattened into a disk-like cloud.
       const u = (k + 0.5) / total
@@ -242,7 +246,7 @@ export function layoutRegion(input: RegionLayoutInput): RegionLayoutResult {
     for (let i = 0; i < n; i++) {
       const p = topics[i].parent ? local.get(topics[i].parent!) : undefined
       if (p === undefined) continue
-      const want = shellFamily[i] ? LEVEL_RADIUS[topics[i].level] * 1.15 + (subR[i] > LEVEL_RADIUS[topics[i].level] ? subR[i] * 1.1 : 0) : childDist[i]
+      const want = shellFamily[i] && subR[i] <= LEVEL_RADIUS[topics[i].level] ? LEVEL_RADIUS[topics[i].level] * 1.15 : childDist[i]
       const dx = pos[i * 3] - pos[p * 3], dy = pos[i * 3 + 1] - pos[p * 3 + 1], dz = pos[i * 3 + 2] - pos[p * 3 + 2]
       const d = Math.hypot(dx, dy, dz) || 1
       const k = (d - want) * 0.06

@@ -1,7 +1,7 @@
 import { Spherical, Vector3 } from 'three'
 import { graph, getLayout, universe } from '../graph'
 import { journeyRoute } from '../knowledge/traverse'
-import { currentProfile } from '../store/settings'
+import { currentProfile, useSettings } from '../store/settings'
 import { levelName } from '../data'
 import { useExplore } from '../store/explore'
 import { knowledgeOf, useKnowledge } from '../store/knowledge'
@@ -36,6 +36,8 @@ export function initWorld() {
   if (!world) {
     // Room for the whole manifest (plus headroom) — regions ignite into it as they stream in.
     const capacity = Math.max(universe.capacity, graph.size) + 64
+    // The camera may travel as far as the universe is large.
+    rig.maxRadius = Math.max(720, universe.extent * 4)
     world = engine.world = new World(graph, capacity, () => universe.positions, universe.center, currentProfile().edgeBudget)
     const existing = graph.topics.map((_, i) => i)
     if (existing.length) world.addNodes(existing, 0)
@@ -305,6 +307,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     graph,
     universe,
     explore: useExplore,
+    settings: useSettings,
     /** Advance the simulation manually (useful when rAF is throttled). */
     step(seconds: number) {
       for (let t = 0; t < seconds; t += 1 / 30) {

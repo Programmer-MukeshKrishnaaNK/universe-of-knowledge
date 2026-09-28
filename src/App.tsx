@@ -6,6 +6,7 @@ import { Controls, DepthMeter, HoverTip, Journey, LiveRegion, useKeyboardNavigat
 import { Fallback, hasWebGL } from './ui/Fallback'
 import { Intro } from './ui/Intro'
 import { Search } from './ui/Search'
+import { useQualityDetection } from './ui/Quality'
 import { RouteLine } from './ui/RouteLine'
 
 const UniverseCanvas = lazy(() => import('./scene/UniverseCanvas'))
@@ -41,6 +42,7 @@ export default function App() {
   const phase = useExplore((s) => s.phase)
   useKeyboardNavigation()
   useDeepLink()
+  useQualityDetection()
 
   useEffect(() => {
     let cancelled = false

@@ -116,6 +116,8 @@ export function Labels({ poolSize }: { poolSize: number }) {
     const focusNeighbors = hasFocus ? new Set(graph.neighbors(w.focus)) : null
     const focal = camera.projectionMatrix.elements[5] * viewport.height * 0.5
     const op = opacity.current
+    const spread = Math.max(1, universe.extent / 158.5)
+    const bandScale = [1, spread, Math.sqrt(spread), 1]
 
     // ── Who could be labelled? ──
     const cand = new Set<number>()
@@ -137,7 +139,8 @@ export function Labels({ poolSize }: { poolSize: number }) {
       let visited = 0
       universe.spatial.query(universe.positions, look.x, look.y, look.z, R, (i) => {
         // Only levels that could be legible at this distance are worth ranking.
-        if (w.level[i] <= 1 || camera.position.distanceTo(w.nodePosition(i, p)) < BANDS[Math.min(3, w.level[i])][0]) cand.add(i)
+        const lv = Math.min(3, w.level[i])
+        if (lv <= 1 || camera.position.distanceTo(w.nodePosition(i, p)) < BANDS[lv][0] * bandScale[lv]) cand.add(i)
         return ++visited < 6000
       })
     }
@@ -157,7 +160,8 @@ export function Labels({ poolSize }: { poolSize: number }) {
         priority += hasFocus ? 0 : 30
       } else {
         const [far, near] = BANDS[lvl]
-        const k = compact ? 0.8 : 1
+        // Larger universes spread fields and clusters further apart; their names carry further too.
+        const k = (compact ? 0.8 : 1) * bandScale[lvl]
         target = smooth(far * k, near * k, d) * smooth(hasFocus ? 0.4 : 0.2, hasFocus ? 0.9 : 0.62, e)
       }
       if (focusNeighbors?.has(i) && lvl > 0) {
@@ -174,7 +178,7 @@ export function Labels({ poolSize }: { poolSize: number }) {
       }
       target *= clamp((w.clock - w.born[i]) / 1.3, 0, 1)
       if (target < 0.02 && op[i] < 0.012) continue
-      const s = clamp(d * 0.0215, 0.2, 9) * LEVEL_SCALE[lvl] * (1 + w.hover[i] * 0.08 + w.focusAmt[i] * 0.12) * (compact ? 1.12 : 1)
+      const s = clamp(d * 0.0215, 0.2, 80) * LEVEL_SCALE[lvl] * (1 + w.hover[i] * 0.08 + w.focusAmt[i] * 0.12) * (compact ? 1.12 : 1)
       q.copy(p).project(camera)
       const depth = Math.max(0.1, d)
       const fontPx = (s * focal) / depth

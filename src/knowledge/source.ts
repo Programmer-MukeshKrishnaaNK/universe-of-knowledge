@@ -16,6 +16,8 @@ export interface DomainManifest {
   title: string
   mapped: boolean
   count: number
+  /** Optional precomputed radius (from an offline layout); otherwise estimated from the count. */
+  radius?: number
 }
 
 export interface RegionManifest {

@@ -59,11 +59,14 @@ export class Universe {
     this.manifest = m
     this.capacity = m.total
     this.positions = new Float32Array(m.total * 3)
-    this.anchors = scaledAnchors(Object.fromEntries(m.domains.map((d) => [d.id, d.count])))
-    for (const d of m.domains) this.domainRadius.set(d.id, estimateDomainRadius(d.count) * 0.8)
+    this.anchors = scaledAnchors(
+      Object.fromEntries(m.domains.map((d) => [d.id, d.count])),
+      Object.fromEntries(m.domains.map((d) => [d.id, d.radius])),
+    )
+    for (const d of m.domains) this.domainRadius.set(d.id, (d.radius ?? estimateDomainRadius(d.count)) * 0.8)
     const mapped = m.domains.filter((d) => d.mapped)
     this.center = [0, 1, 2].map((k) => mapped.reduce((s, d) => s + (this.anchors[d.id]?.[k] ?? 0), 0) / Math.max(1, mapped.length)) as Vec3
-    this.extent = Math.max(...mapped.map((d) => Math.hypot(...([0, 1, 2].map((k) => (this.anchors[d.id]?.[k] ?? 0) - this.center[k]) as Vec3)) + estimateDomainRadius(d.count)))
+    this.extent = Math.max(...mapped.map((d) => Math.hypot(...([0, 1, 2].map((k) => (this.anchors[d.id]?.[k] ?? 0) - this.center[k]) as Vec3)) + (d.radius ?? estimateDomainRadius(d.count))))
     return m
   }
 

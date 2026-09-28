@@ -5,6 +5,7 @@ import { useExplore } from '../store/explore'
 import { useKnowledge } from '../store/knowledge'
 import { hud } from './hud'
 import { OutlineTree } from './Fallback'
+import { QualityControl } from './Quality'
 
 /** Top-left wordmark — also the way home. */
 export function Wordmark() {
@@ -121,6 +122,7 @@ export function Controls() {
           <p><kbd>/</kbd> search · <kbd>Esc</kbd> back · <kbd>←</kbd><kbd>→</kbd> look around · <kbd>Enter</kbd> travel · <kbd>H</kbd> overview · <kbd>M</kbd> your map</p>
         </div>
       )}
+      <QualityControl />
       <button type="button" className={`ctl ${outline ? 'is-active' : ''}`} aria-expanded={outline} onClick={() => setOutline((o) => !o)} title="Browse every topic as a list">
         Outline
       </button>

@@ -118,7 +118,7 @@ export class EdgeField {
         if (di >= 0) for (const e of g.adj[di]) if (g.edgeType[e] === 0) add(e)
       }
       // Near the camera: score by type, strength, level and distance.
-      const reserveForBridges = Math.min(400, Math.floor(this.capacity * 0.08))
+      const reserveForBridges = Math.min(120, Math.floor(this.capacity * 0.03))
       const localBudget = this.capacity - chosen.length - reserveForBridges
       if (localBudget > 0) {
         const R = Math.max(40, Math.min(900, cameraDistance * 1.1))
@@ -193,7 +193,7 @@ export class EdgeField {
     const list: number[] = []
     for (let e = 0; e < g.edgeCount; e++) if (g.edgeCross[e]) list.push(e)
     list.sort((a, b) => g.edgeStrength[b] - g.edgeStrength[a])
-    this.bridgeCache = { version: g.version, list: list.slice(0, 400) }
+    this.bridgeCache = { version: g.version, list: list.slice(0, 120) }
     return this.bridgeCache.list
   }
 

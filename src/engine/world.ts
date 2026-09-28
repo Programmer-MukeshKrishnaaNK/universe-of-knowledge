@@ -327,9 +327,12 @@ export class World {
     const fDomain = f >= 0 ? g.topics[f].domain : null
     const quiet = f >= 0 ? [0.14, 0.12, 0.1, 0.075][g.topics[f].level] : 0
 
+    // In dense universes the multitude of deep concepts steps back, so fields and clusters carry the structure.
+    const density = Math.min(1, Math.max(0, (n - 500) / 5000))
+    const levelGain = [1, 1, 1 + 0.15 * density, 1 - 0.5 * density]
     for (let i = 0; i < n; i++) {
       const t = g.topics[i]
-      let e = BASE_EMPH[t.level] * (t.mapped === false ? 0.62 : 1)
+      let e = BASE_EMPH[t.level] * levelGain[t.level] * (t.mapped === false ? 0.62 : 1)
       if (f >= 0) {
         e = hop[i] === 0 ? 1 : hop[i] === 1 ? 0.96 : hop[i] === 2 ? 0.36 : t.domain === fDomain ? quiet * 2 : quiet
         // Unrelated galaxy cores stay as faint landmarks — they must never outshine the focus.
