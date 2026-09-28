@@ -66,7 +66,7 @@ export function MusicControl() {
       )}
       <button
         type="button"
-        className={`ctl ${open ? 'is-active' : ''}`}
+        className={`ctl ctl-glyph ${open ? 'is-active' : ''}`}
         aria-expanded={open}
         aria-label={`Soundtrack: ${current.title}${muted && choice !== 'off' ? ', muted' : ''}`}
         onClick={() => setOpen((v) => !v)}
@@ -76,7 +76,7 @@ export function MusicControl() {
           <i />
           <i />
         </span>
-        {choice === 'off' ? 'Off' : current.title}
+        <span className="ctl-label">{choice === 'off' ? 'Off' : current.title}</span>
       </button>
     </>
   )

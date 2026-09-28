@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { allTopics, papers } from '../src/data'
 import { KnowledgeGraph } from '../src/knowledge/graph'
+import { GuideKnowledge } from '../src/knowledge/guide'
 import { CURATED_VERSION } from '../src/knowledge/sources/bundled'
 import { contentHash } from '../src/knowledge/validate'
 
@@ -43,6 +44,7 @@ function limiter(perMinute: number) {
  */
 export function createApi(env: Record<string, string | undefined>) {
   const graph = new KnowledgeGraph(allTopics)
+  const guideKnowledge = new GuideKnowledge(graph)
   const live = providerFromEnv(env)
   const allow = limiter(Number(env.AI_RATE_PER_MINUTE) || 20)
   console.log(live ? `[guide] provider: ${live.name} · model: ${live.model}` : '[guide] no AI provider configured — answering offline from the graph')
@@ -55,6 +57,21 @@ export function createApi(env: Record<string, string | undefined>) {
       res.setHeader('content-type', 'application/json')
       const knowledge = { dataset: 'curated', version: CURATED_VERSION, hash: KNOWLEDGE_HASH }
       res.end(JSON.stringify(live ? { provider: live.name, model: live.model, live: true, knowledge } : { provider: 'offline', model: 'knowledge-graph', live: false, knowledge }))
+      return
+    }
+
+    // Read-only knowledge for the guide: topic, prerequisites, related, deeper, path, bridges, discoveries.
+    const knowledgeMatch = /^\/api\/knowledge\/([a-z0-9-]{1,80})(?:\?to=([a-z0-9-]{1,80}))?$/.exec(url)
+    if (knowledgeMatch && req.method === 'GET') {
+      const [, id, to] = knowledgeMatch
+      const ctx = guideKnowledge.context(id)
+      res.setHeader('content-type', 'application/json')
+      if (!ctx) {
+        res.statusCode = 404
+        res.end(JSON.stringify({ error: 'Unknown topic.' }))
+        return
+      }
+      res.end(JSON.stringify(to && graph.get(to) ? { ...ctx, route: guideKnowledge.route(id, to) } : ctx))
       return
     }
 

@@ -128,12 +128,12 @@ export function QualityControl() {
           </div>
         </div>
       )}
-      <button type="button" className={`ctl ${open ? 'is-active' : ''}`} aria-expanded={open} aria-label={`Visual quality: ${quality === 'auto' ? 'Auto, ' : ''}${QUALITY[mode].label}`} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className={`ctl ctl-glyph ${open ? 'is-active' : ''}`} aria-expanded={open} aria-label={`Visual quality: ${quality === 'auto' ? 'Auto, ' : ''}${QUALITY[mode].label}`} onClick={() => setOpen((o) => !o)}>
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
           <circle cx="8" cy="8" r="2.2" fill="currentColor" />
           <circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" strokeWidth="1" strokeDasharray="2.2 2" />
         </svg>
-        {quality === 'auto' ? 'Auto' : QUALITY[mode].label}
+        <span className="ctl-label">{quality === 'auto' ? 'Auto' : QUALITY[mode].label}</span>
       </button>
     </>
   )

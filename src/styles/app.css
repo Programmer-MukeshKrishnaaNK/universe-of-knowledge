@@ -533,7 +533,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 14px;
-  max-width: calc(100vw - var(--panel-w) - 470px);
+  max-width: calc(100vw - var(--panel-w) - 640px); /* room for the controls row (music, quality, outline, map, overview, help) */
   animation: rise 500ms var(--ease) both;
 }
 .journey-back {
@@ -941,6 +941,25 @@ kbd {
   margin: 12px 0 0;
   font-size: 13px;
   color: var(--ink-3);
+}
+.glance-wander {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--ink-3);
+  animation: rise 520ms var(--ease) 210ms both;
+}
+.glance-wander .glance-label {
+  margin-right: 10px;
+}
+.wander-link {
+  color: var(--ink-2);
+  border-bottom: 1px solid var(--line-2);
+  transition: color 200ms, border-color 200ms;
+}
+.wander-link:hover,
+.wander-link:focus-visible {
+  color: var(--ink);
+  border-color: var(--ink-3);
 }
 .glance-ready.is-ready {
   color: var(--warm);
@@ -1839,10 +1858,24 @@ kbd {
   .controls {
     right: 16px;
     bottom: 16px;
+    gap: 6px;
+  }
+  .controls .ctl:not(.ctl-glyph):not(.ctl-round) {
+    padding: 0 11px;
+  }
+  /* Phones: music and quality keep their glyphs (and full accessible names), drop the words. */
+  .ctl-glyph {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+  .ctl-glyph .ctl-label {
+    display: none;
   }
   .controls.with-panel {
     right: 16px;
-    bottom: calc(46vh + 12px);
+    /* One row above the back button / trail, so the two never collide on a phone. */
+    bottom: calc(46vh + 54px);
   }
   .app:has(.panel.is-reading) .journey,
   .app:has(.panel.is-reading) .controls {

@@ -1,6 +1,7 @@
 import type { Paper, Topic } from '../../src/data/schema'
 import type { KnowledgeGraph } from '../../src/knowledge/graph'
 import { advise, stepBack } from '../../src/graph/recommend'
+import { GuideKnowledge } from '../../src/knowledge/guide'
 import type { ChatMessage } from './providers'
 
 export type Mode = 'simple' | 'analogy' | 'math' | 'eli15' | 'deeper' | 'confused' | 'question' | 'next' | 'paper'
@@ -14,7 +15,7 @@ const MODE_INSTRUCTIONS: Record<Mode, string> = {
   confused:
     'The learner said they don’t understand this. Be warm and reassuring (never imply they should already know it). Start with "Let’s take one step back." Rebuild the idea from the most basic intuition, in small steps, and name which single prerequisite would help most. About 150–220 words.',
   question: 'Answer the learner’s question about this topic directly and clearly. If the question is outside the topic, answer briefly and connect it back. Up to about 220 words.',
-  next: 'Recommend what this learner should explore next. Use ONLY the RECOMMENDED NEXT list (from the knowledge graph) — explain in a sentence or two why each of the top two or three follows naturally from this topic and from what they already know. Link each with [[id|title]]. About 120–170 words.',
+  next: 'Recommend what this learner should explore next. Use ONLY the RECOMMENDED NEXT and WORTH DISCOVERING lists (from the knowledge graph) — explain in a sentence or two why each of the top two or three follows naturally from this topic and from what they already know. If a BRIDGE fits, you may end with one surprising connection into another field. Link each with [[id|title]]. About 120–170 words.',
   paper: 'Explain the RESEARCH PAPER below to this learner: what question it asked, what it found or proposed, and why it mattered, in plain language at their depth. Use only the paper details given plus standard textbook knowledge; if the learner would need details beyond them, say so and suggest reading the source. About 150–220 words.',
 }
 
@@ -48,6 +49,12 @@ export function buildMessages(
   graph.deeper(topic.id).forEach(add)
   graph.lineage(topic.id).forEach(add)
   for (const p of graph.prerequisites(topic.id)) graph.prerequisites(p.id).forEach(add)
+  // Read-only view for the guide: it may consult routes, bridges and discoveries, never change them.
+  const kg = new GuideKnowledge(graph)
+  const discoveries = mode === 'next' ? kg.discoveries(topic.id, opts.known) : []
+  const bridges = mode === 'next' ? kg.bridges(topic.id, 4) : []
+  for (const d of discoveries) neighborhood.set(d.id, d.title)
+  for (const b of bridges) for (const x of [b.from, b.to]) neighborhood.set(x.id, x.title)
 
   const knownTitles = opts.known.map((id) => graph.get(id)?.title).filter(Boolean).slice(0, 30)
 
@@ -69,7 +76,19 @@ export function buildMessages(
     [...neighborhood].map(([id, title]) => `${id} — ${title}`).join('\n'),
     '',
     `LEARNER: prefers the "${opts.depth}" depth.${knownTitles.length ? ` Already understands: ${knownTitles.join(', ')}.` : ' No recorded background yet — assume none.'}`,
-    ...(mode === 'next' ? ['', 'RECOMMENDED NEXT (from the knowledge graph, best first)', recommendedNext(graph, topic, opts.known)] : []),
+    ...(mode === 'next'
+      ? [
+          '',
+          'RECOMMENDED NEXT (from the knowledge graph, best first)',
+          recommendedNext(graph, topic, opts.known),
+          '',
+          'WORTH DISCOVERING (id — title: why the graph suggests it)',
+          discoveries.map((d) => `${d.id} — ${d.title}: ${d.reason}`).join('\n') || '(none)',
+          '',
+          'BRIDGES INTO OTHER FIELDS (from — to, relationship)',
+          bridges.map((b) => `${b.from.id} — ${b.to.id} (${b.type})`).join('\n') || '(none)',
+        ]
+      : []),
     ...(mode === 'paper' && opts.paper ? ['', 'RESEARCH PAPER', paperCard(opts.paper)] : []),
   ].join('\n')
 

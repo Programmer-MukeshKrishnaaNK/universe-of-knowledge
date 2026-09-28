@@ -21,3 +21,4 @@ secrets*
 
 # Ingested dataset output (npm run ingest)
 .datasets
+*.tsbuildinfo
