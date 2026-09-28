@@ -45,6 +45,8 @@ export interface Topic {
   /** Alternate names used by search (e.g. "black holes", "EPR"). */
   aliases?: string[]
   domain: DomainId
+  /** Loading region (defaults to the domain). Large domains can be split into several regions. */
+  region?: string
   level: TopicLevel
   /** Spatial / hierarchical parent. Domains have none. */
   parent?: string
@@ -79,9 +81,47 @@ export interface Topic {
   tags?: string[]
   /** false → this region of the universe exists but has not been charted yet. */
   mapped?: boolean
+  /** Typed relationships beyond prerequisites / related (applications, history, derivations…). */
+  relations?: TopicRelation[]
+  /** Where this concept's content comes from. Curated topics are attributed to the project. */
+  provenance?: Provenance
 }
 
-export type RelationshipType = 'contains' | 'prerequisite' | 'related' | 'bridge'
+/**
+ * Relationship types are an open registry (see src/knowledge/relations.ts):
+ * adding a type means adding one entry there — nothing else changes.
+ */
+export type RelationshipType =
+  | 'contains'
+  | 'prerequisite'
+  | 'related'
+  | 'bridge'
+  | 'application'
+  | 'historical'
+  | 'derived_from'
+  | 'uses'
+
+export interface Provenance {
+  /** Human-readable source, e.g. "Curated — Universe of Knowledge" or a dataset name. */
+  source: string
+  url?: string
+  license?: string
+  /** ISO date the content was retrieved or last reviewed. */
+  reviewed?: string
+  /** 0..1 — how confident the pipeline is in this record (curated = 1). */
+  confidence?: number
+  /** Dataset version the record came from. */
+  version?: string
+}
+
+export interface TopicRelation {
+  type: Exclude<RelationshipType, 'contains' | 'bridge'>
+  target: string
+  /** 0..1 */
+  strength?: number
+  note?: string
+  provenance?: Provenance
+}
 
 export interface Relationship {
   source: string
@@ -89,6 +129,10 @@ export interface Relationship {
   type: RelationshipType
   /** 0..1 — how strongly the two ideas depend on each other. */
   strength: number
+  /** True when the relationship crosses from one domain into another. */
+  crossDomain?: boolean
+  note?: string
+  provenance?: Provenance
 }
 
 export interface Paper {

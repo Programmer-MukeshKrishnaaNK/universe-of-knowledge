@@ -16,11 +16,18 @@ attribute float iHover;
 attribute float iFocus;
 attribute float iLevel;
 attribute float iKnown;
-attribute float iDelay;
+attribute float iBorn;
 
-uniform float uReveal;
+uniform float uClock;
 uniform float uViewH;
 uniform float uMap;
+/** 0..1 — how crowded the universe is; dense universes draw distant concepts smaller. */
+uniform float uDensity;
+uniform float uMinPointPx;
+/** Low mode: distant concepts fold into their clusters between these depths. */
+uniform float uCompress;
+uniform vec2 uCompressRange;
+uniform vec2 uFog;
 
 varying vec2 vUv;
 varying vec3 vColor;
@@ -33,24 +40,36 @@ varying float vAlpha;
 varying float vSeed;
 
 void main() {
-  float rev = smoothstep(iDelay, iDelay + 0.16, uReveal);
+  // Each node ignites at its own birth time — regions light up as they stream in.
+  float rev = smoothstep(iBorn, iBorn + 1.3, uClock);
   vec4 mv = modelViewMatrix * vec4(iPos, 1.0);
   float depth = max(-mv.z, 0.001);
+
+  // Level of detail: in Low mode, concepts far away fold into their cluster glow.
+  float lod = 1.0;
+  if (uCompress > 0.5 && iLevel > 1.5) lod = max(smoothstep(uCompressRange.y, uCompressRange.x, depth), step(0.85, iEmph));
+  if (rev * lod < 0.002) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // not drawn — never reaches the rasteriser
+    return;
+  }
+
   // The destination is always the dominant object in view, whatever its level.
   float base = mix(iSize, max(iSize * 1.3, 1.85), iFocus);
-  float s = base * (0.8 + 0.2 * iEmph) * (1.0 + 0.16 * iHover) * (0.35 + 0.65 * rev) * 4.2;
+  float s = base * (0.8 + 0.2 * iEmph) * (1.0 + 0.16 * iHover) * (0.35 + 0.65 * rev) * (0.6 + 0.4 * lod) * 4.2;
 
-  // Keep far nodes as crisp points instead of sub-pixel shimmer.
+  // Keep far nodes as crisp points instead of sub-pixel shimmer; in dense
+  // universes distant concepts shrink towards a fine point.
   float px = s * projectionMatrix[1][1] * uViewH * 0.5 / depth;
   float minPx = 9.0 + iLevel * -1.5;
+  if (iLevel > 1.5) minPx = mix(minPx, uMinPointPx, uDensity);
   float fade = 1.0;
   if (px < minPx) { fade = px / minPx; s *= minPx / max(px, 1e-4); }
 
   mv.xy += position.xy * s;
   gl_Position = projectionMatrix * mv;
 
-  float fog = smoothstep(380.0, 1100.0, depth);
-  vAlpha = rev * mix(1.0, 0.3, fog) * mix(0.45, 1.0, fade);
+  float fog = smoothstep(uFog.x, uFog.y, depth);
+  vAlpha = rev * lod * mix(1.0, 0.3, fog) * mix(0.45, 1.0, fade);
   vUv = uv;
   vColor = iColor;
   // With "Your map" on, what you haven't met yet recedes; what you know steps forward.
@@ -147,37 +166,76 @@ void main() {
 // ─── Relationships ──────────────────────────────────────────────────────
 
 export const edgeVertex = /* glsl */ `
-attribute float aT;
-attribute float aEmph;
-attribute float aFlow;
-attribute float aKind;
-attribute float aLen;
-attribute float aGrow;
-attribute float aTravel;
-attribute vec3 aColor;
+// position.x = slot, position.y = t along the curve. Everything else comes from textures.
+uniform sampler2D uNodePos;
+uniform sampler2D uNodeColor;
+uniform sampler2D uEdges;
+uniform int uNodeTexW;
+uniform int uEdgeTexW;
+uniform vec3 uCenter;
+uniform vec2 uFog;
+uniform float uNear;
 
-varying float vGrow;
-varying float vTravel;
 varying float vT;
 varying float vEmph;
 varying float vFlow;
 varying float vKind;
 varying float vLen;
 varying float vFog;
+varying float vGrow;
+varying float vTravel;
+varying float vCross;
+varying float vNear;
 varying vec3 vColor;
 
+ivec2 at(int i, int w) { return ivec2(i - (i / w) * w, i / w); }
+
 void main() {
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  int slot = int(position.x + 0.5);
+  float u = position.y;
+  vec4 d0 = texelFetch(uEdges, at(slot * 2, uEdgeTexW), 0);
+  vec4 d1 = texelFetch(uEdges, at(slot * 2 + 1, uEdgeTexW), 0);
+  vEmph = d1.x;
+  if (vEmph < 0.003) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // an idle slot is never rasterised
+    return;
+  }
+  int si = int(d0.x + 0.5);
+  int ti = int(d0.y + 0.5);
+  vec3 a = texelFetch(uNodePos, at(si, uNodeTexW), 0).xyz;
+  vec3 b = texelFetch(uNodePos, at(ti, uNodeTexW), 0).xyz;
+  vec3 ca = texelFetch(uNodeColor, at(si, uNodeTexW), 0).rgb;
+  vec3 cb = texelFetch(uNodeColor, at(ti, uNodeTexW), 0).rgb;
+
+  // Quadratic Bezier bowed away from the universe core, orthogonal to the edge.
+  vec3 m = (a + b) * 0.5;
+  vec3 dir = b - a;
+  float len = max(length(dir), 1e-3);
+  dir /= len;
+  vec3 o = m - uCenter + vec3(0.0, 12.0, 0.0);
+  o -= dir * dot(o, dir);
+  float ol = length(o);
+  o = ol > 1e-4 ? o / ol : vec3(0.0, 1.0, 0.0);
+  float kind = d0.z;
+  bool association = (kind > 1.5 && kind < 3.5) || (kind > 4.5 && kind < 5.5);
+  float bow = len * (kind < 0.5 ? 0.07 : association ? 0.2 : 0.14);
+  vec3 q = m + o * bow;
+  float w0 = (1.0 - u) * (1.0 - u), w1 = 2.0 * (1.0 - u) * u, w2 = u * u;
+  vec3 p = a * w0 + q * w1 + b * w2;
+
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
-  vT = aT;
-  vEmph = aEmph;
-  vFlow = aFlow;
-  vKind = aKind;
-  vLen = aLen;
-  vGrow = aGrow;
-  vTravel = aTravel;
-  vColor = aColor;
-  vFog = smoothstep(420.0, 1200.0, -mv.z);
+  float depth = -mv.z;
+  vT = u;
+  vFlow = d1.y;
+  vGrow = d1.z;
+  vTravel = d1.w;
+  vKind = kind;
+  vCross = d0.w;
+  vLen = len;
+  vColor = mix(ca, cb, u);
+  vFog = smoothstep(uFog.x * 1.1, uFog.y * 1.1, depth);
+  vNear = 1.0 - smoothstep(uNear, uNear * 3.0, depth);
 }
 `
 
@@ -186,6 +244,7 @@ uniform float uTime;
 uniform float uReveal;
 uniform float uMotion;
 uniform float uMap;
+uniform float uFocused;
 
 varying float vT;
 varying float vEmph;
@@ -195,14 +254,16 @@ varying float vLen;
 varying float vFog;
 varying float vGrow;
 varying float vTravel;
+varying float vCross;
+varying float vNear;
 varying vec3 vColor;
 
 void main() {
   float ends = smoothstep(0.0, 0.09, vT) * smoothstep(1.0, 0.91, vT);
-  bool sideways = vKind > 1.5;
-  // Sideways relationships are drawn as a quiet dotted line.
+  // Associations (related, bridge, historical) breathe; dependencies flow.
+  bool sideways = (vKind > 1.5 && vKind < 3.5) || (vKind > 4.5 && vKind < 5.5);
   float dotted = sideways ? 0.35 + 0.65 * step(0.45, fract(vT * vLen / 1.1)) : 1.0;
-  float kindGain = vKind < 0.5 ? 0.85 : (vKind < 1.5 ? 1.0 : 0.75);
+  float kindGain = vKind < 0.5 ? 0.85 : (sideways ? 0.75 : 1.0);
 
   // Draw-on: a waking connection grows from the node that woke it.
   float g = abs(vGrow);
@@ -213,7 +274,6 @@ void main() {
   float t = uTime * uMotion;
   float signal;
   if (sideways) {
-    // Related ideas breathe together rather than flow.
     signal = 0.35 * (0.5 + 0.5 * sin(t * 1.3 + vT * 5.0));
   } else {
     // Dependency flows: prerequisite → what it enables, parent → child.
@@ -222,9 +282,13 @@ void main() {
     signal = exp(-pow((ph - 0.5) * 11.0, 2.0)) * 1.35;
   }
 
-  float a = vEmph * ends * dotted * kindGain * drawn;
+  // Distant structure is subtle; relationships near the eye read clearly.
+  float nearGain = mix(1.0, 0.7 + 0.55 * vNear, 1.0 - uFocused);
+  float a = vEmph * ends * dotted * kindGain * drawn * nearGain;
   vec3 col = vColor * (0.62 * a + signal * vFlow * ends * drawn);
   col += mix(vColor, vec3(1.0), 0.6) * front * 1.4 * step(0.3, vEmph);
+  // Crossing into another region of knowledge: a quiet brightening where the colours meet.
+  col += mix(vColor, vec3(1.0), 0.5) * vCross * exp(-pow((vT - 0.5) * 9.0, 2.0)) * 0.9 * a;
   // Your own paths: a faint warm thread along every connection you have travelled.
   col += vec3(1.0, 0.72, 0.42) * vTravel * ends * (0.05 + 0.3 * uMap);
   col *= uReveal * mix(1.0, 0.3, vFog);
@@ -389,6 +453,7 @@ attribute float iAlpha;
 
 uniform float uReveal;
 uniform float uDim;
+uniform float uGain;
 
 varying vec2 vUv;
 varying vec3 vColor;
@@ -406,7 +471,7 @@ void main() {
   // Fade out as the camera enters a veil, and in the far distance.
   float inside = smoothstep(iSize * 0.35, iSize * 1.3, depth);
   float far = smoothstep(4200.0, 1600.0, depth);
-  vAlpha = iAlpha * inside * far * uReveal * mix(1.0, 0.55, uDim);
+  vAlpha = iAlpha * inside * far * uReveal * mix(1.0, 0.55, uDim) * uGain;
   vUv = uv;
   vColor = iColor;
   vSeed = iSeed;

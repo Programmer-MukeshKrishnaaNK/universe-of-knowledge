@@ -1,5 +1,5 @@
 import type { KnowledgeState, Topic } from '../data/schema'
-import type { KnowledgeGraph } from './buildGraph'
+import type { KnowledgeGraph } from '../knowledge/graph'
 
 export type KnowledgeLookup = (id: string) => KnowledgeState | undefined
 

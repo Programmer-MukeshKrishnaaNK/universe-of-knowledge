@@ -1,7 +1,8 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
 import { PerspectiveCamera, Vector3 } from 'three'
-import { graph } from '../graph'
+import { graph, universe } from '../graph'
+import { currentProfile } from '../store/settings'
 import { beginIntro, reframe, rig, startDirector, viewport, world } from '../engine/director'
 import { useExplore } from '../store/explore'
 import { hud } from '../ui/hud'
@@ -106,6 +107,9 @@ export function Driver() {
       if (e.pointerType !== 'mouse') {
         // Touch: pick at the tap position (there is no hover).
         pointer.current = { ...pointer.current, moved: true }
+        grid.current.sig = ''
+        grid.current.built = -1
+        buildPickGrid(performance.now() / 1000)
         const hit = pick(pointer.current.x, pointer.current.y, 22)
         if (hit >= 0) s.travelTo(graph.topics[hit].id, 'click')
         return
@@ -149,41 +153,87 @@ export function Driver() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gl])
 
-  /** Screen-space nearest node — fast, forgiving, and independent of halo size. */
-  function pick(px: number, py: number, minRadius = 14): number {
+  /**
+   * Screen-space picking grid. Visible nodes are projected into 32px buckets
+   * at most `pickHz` times a second, and only while the view is changing;
+   * a pointer move then only looks at the few buckets around it. Cost no
+   * longer grows with pointer movement, and stays bounded at 50k concepts.
+   */
+  const grid = useRef({ cells: new Map<number, number[]>(), sx: new Float32Array(0), sy: new Float32Array(0), r: new Float32Array(0), built: -1, sig: '' })
+  const CELL = 32
+
+  function buildPickGrid(now: number) {
     const w = world
-    if (!w) return -1
+    if (!w) return
+    const G = grid.current
+    const profile = currentProfile()
+    const sig = camera.matrixWorld.elements.map((x) => x.toFixed(3)).join(',') + w.count + ':' + viewport.width
+    const stale = sig !== G.sig || w.changed.pos || w.changed.emph
+    if (!stale || now - G.built < 1 / profile.pickHz) return
+    G.sig = sig
+    G.built = now
+    if (G.sx.length < w.capacity) {
+      G.sx = new Float32Array(w.capacity)
+      G.sy = new Float32Array(w.capacity)
+      G.r = new Float32Array(w.capacity)
+    }
+    G.cells.clear()
     const h = viewport.height
     const focal = camera.projectionMatrix.elements[5] * h * 0.5
     const view = camera.matrixWorldInverse.elements
-    let best = -1
-    let bestScore = Infinity
-    for (let i = 0; i < w.n; i++) {
-      if (w.emph[i] < 0.08) continue
+    const compressFar = universe.extent * 1.35
+    for (let i = 0; i < w.count; i++) {
+      if (w.emph[i] < 0.08 || !w.alive(i)) continue
       w.nodePosition(i, v)
       const depth = -(view[2] * v.x + view[6] * v.y + view[10] * v.z + view[14])
       if (depth <= 0.5) continue
+      // Concepts folded into their cluster (Low mode, far away) are not pickable.
+      if (profile.compress && w.level[i] >= 2 && depth > compressFar && w.emph[i] < 0.85) continue
       v.project(camera)
-      if (v.z > 1) continue
-      const sx = (v.x * 0.5 + 0.5) * viewport.width
-      const sy = (-v.y * 0.5 + 0.5) * h
-      const coreR = (w.visualSize(i) * 0.84 * focal) / depth
-      const radius = Math.max(minRadius, coreR * 1.5)
-      const d = Math.hypot(sx - px, sy - py)
-      if (d > radius) continue
-      const score = d / radius - w.emph[i] * 0.25 - (3 - graph.topics[i].level) * 0.02
-      if (score < bestScore) {
-        bestScore = score
-        best = i
-      }
+      if (v.z > 1 || v.x < -1.1 || v.x > 1.1 || v.y < -1.1 || v.y > 1.1) continue
+      const x = (v.x * 0.5 + 0.5) * viewport.width
+      const y = (-v.y * 0.5 + 0.5) * h
+      G.sx[i] = x
+      G.sy[i] = y
+      G.r[i] = (w.visualSize(i) * 0.84 * focal) / depth
+      const key = Math.floor(x / CELL) * 4096 + Math.floor(y / CELL)
+      const cell = G.cells.get(key)
+      if (cell) cell.push(i)
+      else G.cells.set(key, [i])
     }
+  }
+
+  /** Nearest pickable node to a screen point — forgiving, and independent of halo size. */
+  function pick(px: number, py: number, minRadius = 14): number {
+    const w = world
+    if (!w) return -1
+    const G = grid.current
+    let best = -1
+    let bestScore = Infinity
+    const reach = 3 // cells (≈96px) — covers large nearby nodes
+    const cx = Math.floor(px / CELL), cy = Math.floor(py / CELL)
+    for (let ix = -reach; ix <= reach; ix++)
+      for (let iy = -reach; iy <= reach; iy++) {
+        const cell = G.cells.get((cx + ix) * 4096 + (cy + iy))
+        if (!cell) continue
+        for (const i of cell) {
+          const radius = Math.max(minRadius, G.r[i] * 1.5)
+          const d = Math.hypot(G.sx[i] - px, G.sy[i] - py)
+          if (d > radius) continue
+          const score = d / radius - w.emph[i] * 0.25 - (3 - w.level[i]) * 0.02
+          if (score < bestScore) {
+            bestScore = score
+            best = i
+          }
+        }
+      }
     return best
   }
 
-  useFrame((_, dt) => {
+  useFrame((state, dt) => {
     const w = world
     if (!w) return
-    w.update(dt)
+    w.update(dt, state.clock.elapsedTime)
     rig.update(dt, viewport)
     camera.updateMatrixWorld()
 
@@ -191,6 +241,7 @@ export function Driver() {
     const s = useExplore.getState()
     const pt = pointer.current
     if (pt.inside && !rig.dragging && !rig.busy && s.phase === 'explore') {
+      buildPickGrid(state.clock.elapsedTime)
       const hit = pick(pt.x, pt.y)
       const id = hit >= 0 ? graph.topics[hit].id : null
       if (id !== s.hoverId) s.setHover(id)

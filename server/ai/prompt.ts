@@ -1,5 +1,5 @@
 import type { Paper, Topic } from '../../src/data/schema'
-import type { KnowledgeGraph } from '../../src/graph/buildGraph'
+import type { KnowledgeGraph } from '../../src/knowledge/graph'
 import { advise, stepBack } from '../../src/graph/recommend'
 import type { ChatMessage } from './providers'
 

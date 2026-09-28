@@ -1,5 +1,5 @@
 import { useFrame } from '@react-three/fiber'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { AdditiveBlending, Color, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, PlaneGeometry, ShaderMaterial } from 'three'
 import { domainColor } from '../data'
 import { graph, getLayout } from '../graph'
@@ -11,7 +11,7 @@ import { nebulaFragment, nebulaVertex } from './shaders'
  * Atmosphere in three depths: veils inside each domain (midground), a few
  * wide washes between them, and distant unexplored clusters (background).
  */
-function build(compact: boolean) {
+function build(compact: boolean, density: number) {
   const rand = mulberry32(21)
   const layout = getLayout()
   const P = layout.positions
@@ -33,14 +33,14 @@ function build(compact: boolean) {
     const i = graph.idx(d.id)
     const r = layout.domainRadius.get(d.domain) ?? 20
     c.set(domainColor[d.domain]).convertSRGBToLinear()
-    const veils = compact ? 3 : 5
+    const veils = Math.max(1, Math.round((compact ? 3 : 5) * density))
     for (let k = 0; k < veils; k++) {
       push(P[i * 3] + gaussian(rand) * r * 0.45, P[i * 3 + 1] + gaussian(rand) * r * 0.2, P[i * 3 + 2] + gaussian(rand) * r * 0.45, c, r * (0.75 + rand() * 0.8), (d.mapped === false ? 0.012 : 0.02) * (0.7 + rand() * 0.6))
     }
   }
 
   // Distant clusters: knowledge not yet charted, far beyond the map.
-  const far = compact ? 16 : 30
+  const far = Math.round((compact ? 16 : 30) * density)
   const tints = ['#8fa2ff', '#c7a6ff', '#ffc9a6', '#9fe3d0', '#e3a6c9']
   for (let k = 0; k < far; k++) {
     const u = rand() * 2 - 1
@@ -65,22 +65,31 @@ function build(compact: boolean) {
   return geo
 }
 
-export function Nebulae() {
+export function Nebulae({ density, version }: { density: number; version: number }) {
   const { mesh, material } = useMemo(() => {
     const material = new ShaderMaterial({
       vertexShader: nebulaVertex,
       fragmentShader: nebulaFragment,
-      uniforms: { uReveal: { value: 0 }, uDim: { value: 0 } },
+      uniforms: { uReveal: { value: 0 }, uDim: { value: 0 }, uGain: { value: 1 } },
       transparent: true,
       depthWrite: false,
       depthTest: false,
       blending: AdditiveBlending,
     })
-    const mesh = new Mesh(build(isCompact()), material)
+    const mesh = new Mesh(build(isCompact(), density), material)
     mesh.frustumCulled = false
     mesh.renderOrder = -5
     return { mesh, material }
-  }, [])
+    // Rebuilt as regions arrive (version) or when the quality density changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [density, version])
+  useEffect(
+    () => () => {
+      mesh.geometry.dispose()
+      material.dispose()
+    },
+    [mesh, material],
+  )
   useFrame(() => {
     const w = world!
     material.uniforms.uReveal.value = Math.min(1, w.reveal * 1.2)

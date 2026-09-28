@@ -1,17 +1,27 @@
-import { allTopics } from '../data'
-import { KnowledgeGraph } from './buildGraph'
-import { computeLayout, type Layout } from './layout'
-import { TopicSearch } from './search'
+import { Universe } from '../knowledge/universe'
+import { BundledSource } from '../knowledge/sources/bundled'
 
-export { KnowledgeGraph } from './buildGraph'
+export { KnowledgeGraph } from '../knowledge/graph'
 
-/** The shared, built-once knowledge universe. */
-export const graph = new KnowledgeGraph(allTopics)
-export const search = new TopicSearch(allTopics)
+/**
+ * The live universe. It starts empty and fills region by region; `graph`
+ * and `search` are the same objects throughout, so modules can hold them.
+ */
+export const universe = new Universe()
+universe.setSource(new BundledSource())
 
-let layout: Layout | null = null
-/** Layout is computed lazily so the loading sequence can show real progress. */
-export function getLayout(): Layout {
-  if (!layout) layout = computeLayout(graph)
-  return layout
+export const graph = universe.graph
+export const search = universe.search
+
+/** Live layout view (positions grow as regions load). */
+export function getLayout() {
+  return {
+    get positions() {
+      return universe.positions
+    },
+    domainRadius: universe.domainRadius,
+    get center() {
+      return universe.center
+    },
+  }
 }

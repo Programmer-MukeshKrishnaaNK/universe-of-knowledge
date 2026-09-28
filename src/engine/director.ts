@@ -1,5 +1,7 @@
 import { Spherical, Vector3 } from 'three'
-import { graph, getLayout } from '../graph'
+import { graph, getLayout, universe } from '../graph'
+import { journeyRoute } from '../knowledge/traverse'
+import { currentProfile } from '../store/settings'
 import { levelName } from '../data'
 import { useExplore } from '../store/explore'
 import { knowledgeOf, useKnowledge } from '../store/knowledge'
@@ -32,13 +34,25 @@ export function panelInset() {
 
 export function initWorld() {
   if (!world) {
-    world = engine.world = new World(graph, getLayout())
+    // Room for the whole manifest (plus headroom) — regions ignite into it as they stream in.
+    const capacity = Math.max(universe.capacity, graph.size) + 64
+    world = engine.world = new World(graph, capacity, () => universe.positions, universe.center, currentProfile().edgeBudget)
+    const existing = graph.topics.map((_, i) => i)
+    if (existing.length) world.addNodes(existing, 0)
     world.setKnowledge(knowledgeOf)
+    universe.onRegion(({ indices }) => {
+      const w = world!
+      // Streamed regions ignite gently where they are; the first batch is timed by the intro.
+      w.addNodes(indices, 2.5)
+      w.setKnowledge(knowledgeOf)
+      w.setTravelled(useKnowledge.getState().paths)
+    })
   }
   return world
 }
 
-const OVERVIEW_RADIUS = () => (isCompact() ? 340 : 245)
+/** The overview frames every mapped domain, whatever the dataset size. */
+const OVERVIEW_RADIUS = () => universe.extent * (isCompact() ? 2.145 : 1.546)
 
 function overviewPose(w: World) {
   const s = new Spherical().setFromVector3(rig.position.clone().sub(rig.target))
@@ -92,21 +106,6 @@ function destinationFor(w: World, idx: number, previous = -1) {
   return { look, position: new Vector3().setFromSpherical(s).add(look) }
 }
 
-/** A route that follows the hierarchy: climb to a shared ancestor, then descend. */
-function hierarchicalRoute(fromId: string | null, toId: string): string[] {
-  const down = graph.lineage(toId).map((t) => t.id)
-  if (!fromId) return down
-  if (graph.edgeBetween(graph.idx(fromId), graph.idx(toId)) >= 0) return [fromId, toId]
-  const up = graph.lineage(fromId).map((t) => t.id)
-  let common = 0
-  while (common < up.length && common < down.length && up[common] === down[common]) common++
-  let route = [...up.slice(common > 0 ? common - 1 : 0).reverse(), ...down.slice(common)]
-  if (common === 0) route = [...up.slice().reverse(), ...down]
-  // Long routes skip intermediate climbs — keep the journey legible.
-  if (route.length > 6) route = [route[0], ...route.slice(-5)]
-  return route
-}
-
 let arriveTimer: ReturnType<typeof setTimeout> | undefined
 
 function travel(focusId: string | null, via: string, quiet = false) {
@@ -132,7 +131,24 @@ function travel(focusId: string | null, via: string, quiet = false) {
   }
 
   const idx = graph.idx(focusId)
-  if (idx < 0) return
+  if (idx < 0) {
+    // Not loaded yet: head towards its region while it streams in, then continue the journey.
+    const region = universe.regionFor(focusId)
+    if (!region) return
+    const anchor = universe.anchors[universe.manifest?.regions.find((r) => r.id === region)?.domain ?? '']
+    if (anchor) {
+      const look = new Vector3(...anchor)
+      const dir = rig.position.clone().sub(look).normalize()
+      rig.flyTo(look, look.clone().addScaledVector(dir, (universe.domainRadius.get(region) ?? 60) * 2.6), { speed: 0.8 })
+    }
+    store.setTravelling(true)
+    store.say('Charting that region of the universe…')
+    universe.loadRegion(region).then(() => {
+      if (useExplore.getState().focusId === focusId && graph.idx(focusId) >= 0) travel(focusId, 'search')
+    })
+    return
+  }
+  if (idx >= w.count) return
   lastFramed = { ...viewport }
   const topic = graph.topics[idx]
   const previous = w.focus
@@ -165,7 +181,7 @@ function travel(focusId: string | null, via: string, quiet = false) {
 
   if (via === 'search' && !prefersReducedMotion()) {
     const fromId = previous >= 0 ? graph.topics[previous].id : null
-    const route = hierarchicalRoute(fromId, focusId)
+    const route = journeyRoute(graph, fromId, focusId)
     const nodes = route.map((id) => graph.idx(id))
     const edges: number[] = []
     for (let k = 1; k < nodes.length; k++) edges.push(graph.edgeBetween(nodes[k - 1], nodes[k]))
@@ -248,6 +264,8 @@ export function beginIntro() {
   rig.spherical.setFromVector3(start.clone().sub(look))
   if (rig.camera) rig.camera.position.copy(start)
   w.revealT = 1
+  // The universe ignites from the core outward as the camera arrives.
+  w.igniteAll(w.clock + 0.2, prefersReducedMotion() ? 0.6 : 4.2)
   // A destination chosen before the universe was ready (deep link, early click) wins over the overview.
   const pending = useExplore.getState().focusId
   if (pending) {
@@ -285,11 +303,12 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     },
     viewport,
     graph,
+    universe,
     explore: useExplore,
     /** Advance the simulation manually (useful when rAF is throttled). */
     step(seconds: number) {
       for (let t = 0; t < seconds; t += 1 / 30) {
-        world?.update(1 / 30)
+        world?.update(1 / 30, (world?.clock ?? 0) + 1 / 30)
         rig.update(1 / 30, viewport)
       }
       // Make the next rendered frame upload everything the manual steps changed.

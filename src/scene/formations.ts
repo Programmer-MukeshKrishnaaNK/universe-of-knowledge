@@ -318,8 +318,12 @@ const FORMATION: Record<DomainId, (c: Ctx) => void> = {
   engineering: blueprint,
 }
 
-/** Builds every formation, concept halo and bridge current into one geometry. */
-export function buildFormations(scale: number) {
+/**
+ * Builds every formation, concept halo and bridge current into one geometry.
+ * `haloBudget` caps concept-halo particles across the whole universe, so a
+ * 50,000-concept universe costs the same particle budget as the mode allows.
+ */
+export function buildFormations(scale: number, haloBudget: number) {
   const rand = mulberry32(42)
   const layout = getLayout()
   const P = layout.positions
@@ -334,12 +338,19 @@ export function buildFormations(scale: number) {
     FORMATION[d.domain]({ b, rand, A, r, color, dim: d.mapped === false ? 0.6 : 1, scale, rot })
   }
 
-  // Concept halos — density follows how connected an idea is.
+  // Concept halos — density follows how connected an idea is, within the budget.
   const c = new Color()
+  let wanted = 0
   graph.topics.forEach((t, i) => {
-    if (t.level === 0) return
+    if (t.level > 0) wanted += 2 + graph.adj[i].length * 1.4
+  })
+  const haloScale = Math.min(scale, haloBudget / Math.max(1, wanted))
+  graph.topics.forEach((t, i) => {
+    if (t.level === 0 || haloScale <= 0) return
     const degree = graph.adj[i].length
-    const count = Math.round((2 + degree * 1.4) * scale)
+    const exact = (2 + degree * 1.4) * haloScale
+    // Fractional halos are resolved deterministically, so tiny budgets still spread evenly.
+    const count = Math.floor(exact) + (((i * 0.61803398875) % 1) < exact % 1 ? 1 : 0)
     c.set(domainColor[t.domain]).convertSRGBToLinear()
     const spread = t.level === 1 ? 3.2 : 2.2
     for (let k = 0; k < count; k++) {
@@ -350,7 +361,7 @@ export function buildFormations(scale: number) {
 
   // Currents along cross-domain bridges, flowing from what is learned first.
   const flows = new Map<string, number>()
-  for (let e = 0; e < graph.edgeSource.length; e++) {
+  for (let e = 0; e < graph.edgeCount; e++) {
     const a = graph.topics[graph.edgeSource[e]].domain
     const z = graph.topics[graph.edgeTarget[e]].domain
     if (a === z) continue

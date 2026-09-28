@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { allTopics, papers } from '../src/data'
-import { KnowledgeGraph } from '../src/graph/buildGraph'
+import { KnowledgeGraph } from '../src/knowledge/graph'
 import { buildMessages, composeOffline, type Mode } from './ai/prompt'
 import { OfflineProvider, providerFromEnv, type AIProvider, type ChatMessage } from './ai/providers'
 

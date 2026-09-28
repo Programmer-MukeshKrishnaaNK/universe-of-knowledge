@@ -1,7 +1,8 @@
 import { useFrame, useThree } from '@react-three/fiber'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, LineSegments, Points, ShaderMaterial, Vector3 } from 'three'
 import { isCompact, world } from '../engine/director'
+import type { QualityProfile } from '../engine/quality'
 import { mulberry32 } from '../lib/random'
 import { buildFormations, buildMotes } from './formations'
 import { prefersReducedMotion } from '../lib/motion'
@@ -55,14 +56,27 @@ function makeMaterial(attenuate: number, gain: number) {
   })
 }
 
-export function Dust() {
+export function Dust({ profile, version }: { profile: QualityProfile; version: number }) {
   const dpr = useThree((s) => s.viewport.dpr)
-  const { dust, stars, motes, strokes } = useMemo(() => {
-    const compact = isCompact()
-    const formations = buildFormations(compact ? 0.5 : 1)
+  const compact = isCompact()
+
+  // The sky is fixed; motes follow the mode.
+  const { stars, motes } = useMemo(() => {
+    const stars = new Points(buildStars(compact ? 1400 : 3200), makeMaterial(0, 1))
+    const motes = new Points(buildMotes(profile.motes ? (compact ? 110 : 260) : 0), makeMaterial(1, 1))
+    ;(motes.material as ShaderMaterial).uniforms.uWrap.value = 1
+    for (const p of [stars, motes]) p.frustumCulled = false
+    stars.renderOrder = 0
+    motes.renderOrder = 6
+    return { stars, motes }
+  }, [compact, profile.motes])
+
+  // Formations, halos and bridge currents follow the mode and grow as regions arrive.
+  const { dust, strokes } = useMemo(() => {
+    const formations = buildFormations((compact ? 0.5 : 1) * profile.formations, profile.halos * (compact ? 0.5 : 1))
     const dust = new Points(formations.points, makeMaterial(1, 1))
     const strokes = new LineSegments(
-      formations.lines,
+      profile.strokes ? formations.lines : new BufferGeometry(),
       new ShaderMaterial({
         vertexShader: strokeVertex,
         fragmentShader: strokeFragment,
@@ -72,17 +86,32 @@ export function Dust() {
         blending: AdditiveBlending,
       }),
     )
+    if (!profile.strokes) formations.lines.dispose()
     strokes.frustumCulled = false
     strokes.renderOrder = 1
-    const stars = new Points(buildStars(compact ? 1400 : 3200), makeMaterial(0, 1))
-    const motes = new Points(buildMotes(compact ? 110 : 260), makeMaterial(1, 1))
-    ;(motes.material as ShaderMaterial).uniforms.uWrap.value = 1
-    for (const p of [dust, stars, motes]) p.frustumCulled = false
-    stars.renderOrder = 0
+    dust.frustumCulled = false
     dust.renderOrder = 1
-    motes.renderOrder = 6
-    return { dust, stars, motes, strokes }
-  }, [])
+    return { dust, strokes }
+  }, [compact, profile.formations, profile.halos, profile.strokes, version])
+
+  useEffect(
+    () => () => {
+      for (const o of [stars, motes]) {
+        o.geometry.dispose()
+        ;(o.material as ShaderMaterial).dispose()
+      }
+    },
+    [stars, motes],
+  )
+  useEffect(
+    () => () => {
+      for (const o of [dust, strokes]) {
+        o.geometry.dispose()
+        ;(o.material as ShaderMaterial).dispose()
+      }
+    },
+    [dust, strokes],
+  )
 
   useFrame((state) => {
     const w = world!

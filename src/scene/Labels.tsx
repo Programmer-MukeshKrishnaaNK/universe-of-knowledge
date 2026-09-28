@@ -1,14 +1,12 @@
-import { Text } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { useMemo, useRef } from 'react'
-import { Color, Vector3, type Mesh } from 'three'
+import { useEffect, useMemo, useRef } from 'react'
+import { Color, Group, Vector3 } from 'three'
+import { Text } from 'troika-three-text'
 import interMedium from '@fontsource/inter/files/inter-latin-500-normal.woff?url'
 import { domainColor } from '../data'
-import { graph } from '../graph'
-import { isCompact, panelInset, viewport, world } from '../engine/director'
+import { graph, universe } from '../graph'
+import { isCompact, panelInset, rig, viewport, world } from '../engine/director'
 import { clamp } from '../lib/motion'
-
-type TroikaText = Mesh & { fillOpacity: number; sync: () => void }
 
 const up = new Vector3()
 const p = new Vector3()
@@ -28,6 +26,8 @@ const BANDS: [number, number][] = [
 const LEVEL_SCALE = [0.6, 0.8, 0.72, 0.68]
 /** Average glyph advance of Inter 500, in ems. */
 const EM = 0.56
+/** Up to this many concepts, every one is a label candidate; beyond it, candidates come from the spatial index. */
+const SCAN_ALL = 1500
 
 interface Candidate {
   i: number
@@ -40,31 +40,73 @@ interface Candidate {
   s: number
 }
 
-/**
- * SDF text labels, one per node. Each frame they are billboarded, kept at a
- * near-constant screen size, faded by level-of-detail and emphasis, and
- * de-cluttered in screen space: when two labels would overlap, the more
- * meaningful one wins and the other gracefully fades.
- */
-export function Labels() {
-  const refs = useRef<(TroikaText | null)[]>([])
-  const opacity = useRef(new Float32Array(graph.size))
-  const candidates = useRef<Candidate[]>([])
+interface LabelStyle {
+  text: string
+  color: string
+  spacing: number
+  ems: number
+}
 
-  const items = useMemo(
+/**
+ * A fixed pool of SDF text labels.
+ *
+ * The universe may hold tens of thousands of concepts, but only a handful of
+ * labels can ever be read at once. Each frame the most meaningful candidates
+ * (focus, hover, route, domains, what is near and legible) are ranked,
+ * de-cluttered in screen space around the interface chrome, and the pool's
+ * text objects are handed to the winners. A label keeps its slot while it
+ * stays visible, fades out before its slot is reused, and never pops.
+ */
+export function Labels({ poolSize }: { poolSize: number }) {
+  const group = useRef<Group>(null)
+  const opacity = useRef(new Float32Array(world!.capacity))
+  const owner = useRef(new Int32Array(poolSize).fill(-1))
+  const slotOf = useRef(new Map<number, number>())
+  const styles = useRef(new Map<number, LabelStyle>())
+
+  const pool = useMemo(
     () =>
-      graph.topics.map((t) => {
-        const tint = new Color(domainColor[t.domain]).lerp(new Color('#ffffff'), t.level === 0 ? 0.55 : 0.72)
-        const text = t.level === 0 ? t.title.toUpperCase() : t.title
-        return {
-          text,
-          color: '#' + tint.getHexString(),
-          spacing: t.level === 0 ? 0.26 : 0.01,
-          ems: text.length * (EM + (t.level === 0 ? 0.26 : 0.01)),
-        }
+      Array.from({ length: poolSize }, () => {
+        const t = new Text()
+        t.font = interMedium
+        t.fontSize = 1
+        t.anchorX = 'center'
+        t.anchorY = 'top'
+        t.renderOrder = 5
+        t.material.depthWrite = false
+        t.material.depthTest = false
+        t.material.toneMapped = false
+        t.visible = false
+        return t
       }),
-    [],
+    [poolSize],
   )
+
+  useEffect(() => {
+    const g = group.current
+    if (!g) return
+    for (const t of pool) g.add(t)
+    return () => {
+      for (const t of pool) {
+        g.remove(t)
+        t.dispose()
+      }
+      slotOf.current.clear()
+      owner.current.fill(-1)
+    }
+  }, [pool])
+
+  const style = (i: number): LabelStyle => {
+    let s = styles.current.get(i)
+    if (!s) {
+      const t = graph.topics[i]
+      const tint = new Color(domainColor[t.domain] ?? '#cccccc').lerp(new Color('#ffffff'), t.level === 0 ? 0.55 : 0.72)
+      const text = t.level === 0 ? t.title.toUpperCase() : t.title
+      s = { text, color: '#' + tint.getHexString(), spacing: t.level === 0 ? 0.26 : 0.01, ems: text.length * (EM + (t.level === 0 ? 0.26 : 0.01)) }
+      styles.current.set(i, s)
+    }
+    return s
+  }
 
   useFrame(({ camera }, dt) => {
     const w = world!
@@ -73,17 +115,42 @@ export function Labels() {
     const hasFocus = w.focus >= 0
     const focusNeighbors = hasFocus ? new Set(graph.neighbors(w.focus)) : null
     const focal = camera.projectionMatrix.elements[5] * viewport.height * 0.5
-    const list = candidates.current
-    list.length = 0
+    const op = opacity.current
 
-    for (let i = 0; i < graph.size; i++) {
+    // ── Who could be labelled? ──
+    const cand = new Set<number>()
+    if (w.count <= SCAN_ALL) for (let i = 0; i < w.count; i++) cand.add(i)
+    else {
+      for (const x of [w.focus, w.hoverIdx, w.previewIdx]) if (x >= 0) cand.add(x)
+      focusNeighbors?.forEach((i) => cand.add(i))
+      for (const d of graph.byDomain.keys()) {
+        const di = graph.idx(d)
+        if (di >= 0) cand.add(di)
+      }
+      for (const e of w.routeEdges) {
+        cand.add(graph.edgeSource[e])
+        cand.add(graph.edgeTarget[e])
+      }
+      for (const i of slotOf.current.keys()) cand.add(i)
+      const look = rig.flight ? rig.flight.look1 : rig.target
+      const R = clamp(camera.position.distanceTo(look) * 1.1, 60, 1200)
+      let visited = 0
+      universe.spatial.query(universe.positions, look.x, look.y, look.z, R, (i) => {
+        // Only levels that could be legible at this distance are worth ranking.
+        if (w.level[i] <= 1 || camera.position.distanceTo(w.nodePosition(i, p)) < BANDS[Math.min(3, w.level[i])][0]) cand.add(i)
+        return ++visited < 6000
+      })
+    }
+
+    const list: Candidate[] = []
+    for (const i of cand) {
+      if (i >= w.count) continue
       const t = graph.topics[i]
       w.nodePosition(i, p)
       const d = camera.position.distanceTo(p)
       const e = w.emph[i]
       const lvl = t.level
       let priority = 10 + (3 - lvl) * 4 + e * 10
-
       let target: number
       if (lvl === 0) {
         target = smooth(14, 40, d) * (hasFocus ? (i === w.focus ? 0.8 : focusNeighbors?.has(i) ? 0.4 : 0.16) : 0.6) * (t.mapped === false ? 0.62 : 1)
@@ -105,14 +172,8 @@ export function Labels() {
         target = Math.max(target, w.hover[i])
         priority += 100
       }
-      target *= clamp(w.reveal * 1.6 - w.delay[i], 0, 1)
-      if (target < 0.02 && opacity.current[i] < 0.012) {
-        const label = refs.current[i]
-        if (label) label.visible = false
-        continue
-      }
-
-      // Screen-space footprint for de-cluttering.
+      target *= clamp((w.clock - w.born[i]) / 1.3, 0, 1)
+      if (target < 0.02 && op[i] < 0.012) continue
       const s = clamp(d * 0.0215, 0.2, 9) * LEVEL_SCALE[lvl] * (1 + w.hover[i] * 0.08 + w.focusAmt[i] * 0.12) * (compact ? 1.12 : 1)
       q.copy(p).project(camera)
       const depth = Math.max(0.1, d)
@@ -124,22 +185,24 @@ export function Labels() {
         priority,
         x: (q.x * 0.5 + 0.5) * viewport.width,
         y: (-q.y * 0.5 + 0.5) * viewport.height + nodePx + fontPx * 0.55,
-        w: items[i].ems * fontPx,
+        w: style(i).ems * fontPx,
         h: fontPx * 1.15,
         s,
       })
     }
 
-    // Greedy placement by priority. The interface chrome is pre-placed so
-    // labels never slide underneath the top bar or the reading panel.
+    // ── Greedy de-cluttering around the interface chrome and bright cores ──
     list.sort((a, b) => b.priority - a.priority)
     const W = viewport.width
     const H = viewport.height
-    const zone = (x: number, y: number, w: number, h: number, owner = -1): Candidate => ({ i: owner, target: 1, priority: 0, x: x + w / 2, y, w, h, s: 0 })
+    const zone = (x: number, y: number, zw: number, zh: number, who = -1): Candidate => ({ i: who, target: 1, priority: 0, x: x + zw / 2, y, w: zw, h: zh, s: 0 })
     const placed: Candidate[] = [zone(0, 0, W, 50)]
-    // Bright cores (domains, the focus) are obstacles too — no label under a sun.
-    for (let i = 0; i < graph.size; i++) {
-      if ((graph.topics[i].level !== 0 || w.emph[i] < 0.4) && i !== w.focus) continue
+    const obstacles = new Set<number>(w.focus >= 0 ? [w.focus] : [])
+    for (const d of graph.byDomain.keys()) {
+      const di = graph.idx(d)
+      if (di >= 0 && di < w.count && w.emph[di] >= 0.4) obstacles.add(di)
+    }
+    for (const i of obstacles) {
       w.nodePosition(i, q)
       const depth = q.distanceTo(camera.position)
       q.project(camera)
@@ -153,6 +216,7 @@ export function Labels() {
       if (inset.x) placed.push(zone(W - inset.x, 0, inset.x, H))
       if (inset.y) placed.push(zone(0, H - inset.y, W, inset.y))
     }
+    const winners: Candidate[] = []
     for (const c of list) {
       if (c.target > 0.05) {
         const pad = 6
@@ -160,13 +224,45 @@ export function Labels() {
         if (hit && c.priority < 180) c.target = 0
         else placed.push(c)
       }
+      if (c.target > 0.05 || op[c.i] > 0.012) winners.push(c)
+    }
 
-      const label = refs.current[c.i]
-      if (!label) continue
-      const o = (opacity.current[c.i] += (c.target - opacity.current[c.i]) * (1 - Math.exp(-dt * 8)))
-      label.visible = o > 0.012
+    // ── Hand pool slots to winners (keeping existing owners in place) ──
+    const k = 1 - Math.exp(-dt * 8)
+    const ranked = winners.slice(0, poolSize * 2)
+    const keep = new Set<number>()
+    for (const c of ranked) if (slotOf.current.has(c.i)) keep.add(c.i)
+    for (const [i, s] of slotOf.current) {
+      if (keep.has(i)) continue
+      // Not a candidate any more: fade out, then free the slot.
+      op[i] += (0 - op[i]) * k
+      if (op[i] < 0.012) {
+        slotOf.current.delete(i)
+        owner.current[s] = -1
+        pool[s].visible = false
+      } else pool[s].fillOpacity = op[i]
+    }
+    for (const c of ranked) {
+      let s = slotOf.current.get(c.i)
+      if (s === undefined) {
+        if (c.target <= 0.05) continue
+        s = owner.current.indexOf(-1)
+        if (s < 0) continue // pool full: the most meaningful labels already hold every slot
+        owner.current[s] = c.i
+        slotOf.current.set(c.i, s)
+        const st = style(c.i)
+        const label = pool[s]
+        label.text = st.text
+        label.letterSpacing = st.spacing
+        label.color = st.color
+        label.sync()
+        op[c.i] = 0
+      }
+      const label = pool[s]
+      op[c.i] += (c.target - op[c.i]) * k
+      label.visible = op[c.i] > 0.012
       if (!label.visible) continue
-      label.fillOpacity = o
+      label.fillOpacity = op[c.i]
       label.scale.setScalar(c.s)
       w.nodePosition(c.i, p)
       const offset = w.visualSize(c.i) * (graph.topics[c.i].level === 0 ? 0.95 : 0.78) + c.s * 0.55
@@ -175,29 +271,5 @@ export function Labels() {
     }
   })
 
-  return (
-    <group>
-      {items.map((it, i) => (
-        <Text
-          key={graph.topics[i].id}
-          ref={(el: unknown) => {
-            refs.current[i] = el as TroikaText | null
-          }}
-          font={interMedium}
-          fontSize={1}
-          letterSpacing={it.spacing}
-          anchorX="center"
-          anchorY="top"
-          color={it.color}
-          renderOrder={5}
-          material-depthWrite={false}
-          material-depthTest={false}
-          material-toneMapped={false}
-          visible={false}
-        >
-          {it.text}
-        </Text>
-      ))}
-    </group>
-  )
+  return <group ref={group} />
 }

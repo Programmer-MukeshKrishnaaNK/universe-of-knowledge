@@ -1,12 +1,9 @@
 import { Color, Vector3 } from 'three'
 import { domainColor } from '../data'
 import type { KnowledgeState } from '../data/schema'
-import type { KnowledgeGraph } from '../graph/buildGraph'
-import type { Layout } from '../graph/layout'
-import { damp, prefersReducedMotion, springTo } from '../lib/motion'
-
-/** Edge curves are sampled at this many segments. */
-export const EDGE_SEGMENTS = 22
+import type { KnowledgeGraph } from '../knowledge/graph'
+import { damp, springTo } from '../lib/motion'
+import { EdgeField } from './edges'
 
 export const NODE_SIZE = [3.1, 1.45, 0.82, 0.62]
 const BASE_EMPH = [1, 0.86, 0.66, 0.56]
@@ -22,6 +19,8 @@ const KNOWN_CODE: Record<KnowledgeState, number> = {
 export const FOCUS_RADIUS = [0, 12, 9.5, 9.5]
 /** Constellation ring factor for crowded groups (outer ring). */
 export const OUTER_RING = 1.34
+/** Nodes that are not yet loaded are born "never". */
+const UNBORN = 1e9
 
 export interface ViewBasis {
   right: Vector3
@@ -34,14 +33,17 @@ export interface ViewBasis {
 }
 
 /**
- * All mutable per-node / per-edge visual state, in typed arrays that are
- * handed to the GPU as-is (the arrays *are* the attribute buffers).
- * React never touches this per frame — the scene components read it.
+ * All mutable per-node visual state, in typed arrays sized to the universe's
+ * capacity and handed to the GPU as-is. Regions stream in by igniting their
+ * slots (addNodes); nothing is reallocated as the universe grows.
+ * Relationships live in an EdgeField: a budgeted, relevance-selected subset.
+ * React never touches this per frame — scene components read it.
  */
 export class World {
   readonly graph: KnowledgeGraph
-  readonly n: number
-  readonly m: number
+  readonly capacity: number
+  /** Nodes currently present (graph.size). */
+  count = 0
   readonly base: Float32Array
   readonly pos: Float32Array
   readonly vel: Float32Array
@@ -49,42 +51,30 @@ export class World {
   readonly color: Float32Array
   readonly size: Float32Array
   readonly level: Float32Array
-  readonly delay: Float32Array
+  /** Clock time at which each node ignites. */
+  readonly born: Float32Array
   readonly emph: Float32Array
   readonly emphT: Float32Array
   readonly hover: Float32Array
   readonly hoverT: Float32Array
   readonly focusAmt: Float32Array
   readonly known: Float32Array
+  /** Hop distance from the focus (-1 = far). */
+  readonly hop: Int8Array
 
-  readonly edgeEmph: Float32Array
-  readonly edgeEmphT: Float32Array
-  readonly edgeFlow: Float32Array
-  readonly edgeFlowT: Float32Array
-  /** 0..1 draw-on progress, and which end it grows from (+1 source, -1 target). */
-  readonly edgeGrow: Float32Array
-  readonly edgeGrowDir: Float32Array
-  /** Per-vertex buffers for the edge geometry. */
-  readonly edgeVerts: Float32Array
-  readonly edgeVertEmph: Float32Array
-  readonly edgeVertFlow: Float32Array
-  readonly edgeVertGrow: Float32Array
-  readonly edgeVertTravel: Float32Array
-  readonly edgeVertColor: Float32Array
-  readonly edgeVertT: Float32Array
-  readonly edgeVertKind: Float32Array
-  readonly edgeVertLen: Float32Array
-
-  readonly layout: Layout
-  readonly center: Vector3
+  edges: EdgeField
+  readonly center = new Vector3()
 
   focus = -1
   hoverIdx = -1
   previewIdx = -1
   routeEdges = new Set<number>()
-  /** 0..1 — global reveal during the intro. */
+  travelled = new Set<number>()
+  /** 0..1 — global reveal during the intro (atmosphere follows it). */
   reveal = 0
   revealT = 0
+  /** Seconds on the scene clock (kept in step by the driver). */
+  clock = 0
   /** 0..1 — how much the scene recedes behind a focused topic. */
   dim = 0
   dimT = 0
@@ -94,77 +84,67 @@ export class World {
 
   posDirty = true
   emphDirty = true
-  /** What changed during the last update() — scene components upload only this. */
-  changed = { pos: true, emph: true, known: true }
-  edgeDirty = true
   knownDirty = true
-  travelDirty = true
+  /** Bumped whenever nodes ignite — geometry-owning components rebuild lazily. */
+  generation = 0
+  /** What changed during the last update() — scene components upload only this. */
+  changed = { pos: true, emph: true, known: true, born: true }
+  private bornDirty = true
+  private positionsOf: () => Float32Array
 
-  constructor(graph: KnowledgeGraph, layout: Layout) {
+  constructor(graph: KnowledgeGraph, capacity: number, positions: () => Float32Array, center: [number, number, number], edgeBudget: number) {
     this.graph = graph
-    this.layout = layout
-    const n = (this.n = graph.size)
-    const m = (this.m = graph.edgeSource.length)
-    this.base = layout.positions
-    this.pos = new Float32Array(layout.positions)
+    this.capacity = capacity
+    this.positionsOf = positions
+    const n = capacity
+    this.base = new Float32Array(n * 3)
+    this.pos = new Float32Array(n * 3)
     this.vel = new Float32Array(n * 3)
-    this.target = new Float32Array(layout.positions)
+    this.target = new Float32Array(n * 3)
     this.color = new Float32Array(n * 3)
     this.size = new Float32Array(n)
     this.level = new Float32Array(n)
-    this.delay = new Float32Array(n)
+    this.born = new Float32Array(n).fill(UNBORN)
     this.emph = new Float32Array(n)
     this.emphT = new Float32Array(n)
     this.hover = new Float32Array(n)
     this.hoverT = new Float32Array(n)
     this.focusAmt = new Float32Array(n)
     this.known = new Float32Array(n)
-    this.center = new Vector3(...layout.center)
+    this.hop = new Int8Array(n).fill(-1)
+    this.center.set(...center)
+    this.edges = new EdgeField(this, edgeBudget)
+  }
 
+  /** Ignite newly loaded nodes. `stagger` spreads their birth for a gentle reveal. */
+  addNodes(indices: number[], stagger: number) {
+    const g = this.graph
+    const P = this.positionsOf()
     const c = new Color()
-    graph.topics.forEach((t, i) => {
-      c.set(domainColor[t.domain]).convertSRGBToLinear()
+    const [cx, cy, cz] = [this.center.x, this.center.y, this.center.z]
+    for (const i of indices) {
+      if (i >= this.capacity) continue
+      const t = g.topics[i]
+      for (let k = 0; k < 3; k++) {
+        this.base[i * 3 + k] = P[i * 3 + k]
+        this.pos[i * 3 + k] = P[i * 3 + k]
+        this.target[i * 3 + k] = P[i * 3 + k]
+      }
+      c.set(domainColor[t.domain] ?? '#cccccc').convertSRGBToLinear()
       this.color.set([c.r, c.g, c.b], i * 3)
       this.size[i] = NODE_SIZE[t.level] * (t.mapped === false ? 0.8 : 1)
       this.level[i] = t.level
-      // Reveal: domains ignite first, then knowledge spreads outward.
-      const dx = this.base[i * 3] - layout.center[0]
-      const dy = this.base[i * 3 + 1] - layout.center[1]
-      const dz = this.base[i * 3 + 2] - layout.center[2]
-      this.delay[i] = Math.min(0.85, t.level * 0.14 + Math.hypot(dx, dy, dz) / 520 + ((i * 0.61803) % 1) * 0.06)
-    })
-
-    this.edgeEmph = new Float32Array(m)
-    this.edgeEmphT = new Float32Array(m)
-    this.edgeFlow = new Float32Array(m)
-    this.edgeFlowT = new Float32Array(m)
-    this.edgeGrow = new Float32Array(m).fill(1)
-    this.edgeGrowDir = new Float32Array(m).fill(1)
-    const vpe = EDGE_SEGMENTS + 1
-    this.edgeVerts = new Float32Array(m * vpe * 3)
-    this.edgeVertEmph = new Float32Array(m * vpe)
-    this.edgeVertFlow = new Float32Array(m * vpe)
-    this.edgeVertGrow = new Float32Array(m * vpe).fill(1)
-    this.edgeVertTravel = new Float32Array(m * vpe)
-    this.edgeVertColor = new Float32Array(m * vpe * 3)
-    this.edgeVertT = new Float32Array(m * vpe)
-    this.edgeVertKind = new Float32Array(m * vpe)
-    this.edgeVertLen = new Float32Array(m * vpe)
-    for (let e = 0; e < m; e++) {
-      const s = graph.edgeSource[e], t = graph.edgeTarget[e]
-      for (let k = 0; k < vpe; k++) {
-        const v = e * vpe + k
-        const f = k / EDGE_SEGMENTS
-        this.edgeVertT[v] = f
-        this.edgeVertKind[v] = graph.edgeType[e]
-        // Cross-domain edges blend their two colours along their length.
-        for (let ch = 0; ch < 3; ch++) this.edgeVertColor[v * 3 + ch] = this.color[s * 3 + ch] * (1 - f) + this.color[t * 3 + ch] * f
-      }
+      const d = Math.hypot(P[i * 3] - cx, P[i * 3 + 1] - cy, P[i * 3 + 2] - cz)
+      // Domains ignite first, then knowledge spreads outward from the core.
+      this.born[i] = this.clock + Math.min(0.85, t.level * 0.14 + d / 520 + ((i * 0.61803) % 1) * 0.06) * stagger
     }
+    this.count = Math.min(this.capacity, g.size)
+    this.generation++
+    this.bornDirty = true
     this.recompute()
-    this.emph.set(this.emphT)
-    this.edgeEmph.set(this.edgeEmphT)
-    this.writeEdgeGeometry()
+    this.emph.set(this.emphT.subarray(0, this.count), 0)
+    this.posDirty = true
+    this.edges.markSelectionDirty()
   }
 
   // ─── State changes ────────────────────────────────────────────────────
@@ -175,50 +155,53 @@ export class World {
     this.dimT = idx >= 0 ? 0.8 + this.graph.topics[idx].level * 0.1 : 0
     this.arrange(basis)
     this.recompute()
+    this.edges.markSelectionDirty()
   }
 
   setHover(idx: number) {
     if (idx === this.hoverIdx) return
     this.hoverIdx = idx
     this.recompute()
+    this.edges.markSelectionDirty()
   }
 
   setPreview(idx: number) {
     if (idx === this.previewIdx) return
     this.previewIdx = idx
     this.recompute()
+    this.edges.markSelectionDirty()
   }
 
   setRoute(edges: number[]) {
     this.routeEdges = new Set(edges)
     this.recompute()
+    this.edges.markSelectionDirty()
   }
 
   lightRouteEdge(e: number) {
-    this.edgeEmphT[e] = 1
-    this.edgeFlowT[e] = 1
-    this.emphDirty = true
+    this.routeEdges.add(e)
+    this.edges.light(e)
   }
 
   setKnowledge(lookup: (id: string) => KnowledgeState | undefined) {
-    this.graph.topics.forEach((t, i) => {
-      const s = lookup(t.id)
+    const g = this.graph
+    for (let i = 0; i < this.count; i++) {
+      const s = lookup(g.topics[i].id)
       this.known[i] = s ? KNOWN_CODE[s] : 0
-    })
+    }
     this.knownDirty = true
   }
 
-  /** Mark the connections this learner has travelled (keys are "a|b", sorted). */
+  /** Mark the connections this learner has travelled (keys are "a|b", sorted ids). */
   setTravelled(keys: string[]) {
-    const set = new Set(keys)
-    const vpe = EDGE_SEGMENTS + 1
     const g = this.graph
-    for (let e = 0; e < this.m; e++) {
-      const a = g.topics[g.edgeSource[e]].id, b = g.topics[g.edgeTarget[e]].id
-      const v = set.has(a < b ? `${a}|${b}` : `${b}|${a}`) ? 1 : 0
-      this.edgeVertTravel.fill(v, e * vpe, (e + 1) * vpe)
+    this.travelled.clear()
+    for (const key of keys) {
+      const [a, b] = key.split('|')
+      const e = g.edgeBetween(g.idx(a), g.idx(b))
+      if (e >= 0) this.travelled.add(e)
     }
-    this.travelDirty = true
+    this.edges.markStateDirty()
   }
 
   setMapLayer(on: boolean) {
@@ -228,7 +211,8 @@ export class World {
   /** Arrange the focused topic's neighbourhood into a readable constellation. */
   private arrange(basis?: ViewBasis) {
     const g = this.graph
-    this.target.set(this.base)
+    const n = this.count
+    this.target.set(this.base.subarray(0, n * 3))
     const f = this.focus
     if (f < 0 || !basis) {
       this.posDirty = true
@@ -245,28 +229,29 @@ export class World {
     const fx = this.base[f * 3], fy = this.base[f * 3 + 1], fz = this.base[f * 3 + 2]
 
     const taken = new Set<number>([f])
-    const collect = (ids: string[]) => {
+    const collect = (ids: string[], cap = 24) => {
       const out: number[] = []
       for (const id of ids) {
         const i = g.idx(id)
-        if (i < 0 || taken.has(i) || g.topics[i].level === 0) continue
+        if (i < 0 || i >= n || taken.has(i) || g.topics[i].level === 0) continue
         taken.add(i)
         out.push(i)
+        if (out.length >= cap) break
       }
       return out
     }
     const prereq = collect(g.prerequisites(ft.id).map((t) => t.id))
     const parent = collect(ft.parent ? [ft.parent] : [])
     const deeper = collect(g.deeper(ft.id).map((t) => t.id))
-    const related = collect(g.related(ft.id).map((t) => t.id))
+    const related = collect(g.related(ft.id).map((t) => t.id), 16)
 
     const place = (group: number[], centerDeg: number, maxSpreadDeg: number, radius: number) => {
       const c = group.length
-      const twoRings = c > 5
+      const rings = c > 16 ? 3 : c > 5 ? 2 : 1
       group.forEach((i, k) => {
-        const ring = twoRings ? k % 2 : 0
-        const slot = twoRings ? Math.floor(k / 2) : k
-        const slots = twoRings ? Math.ceil(c / 2) : c
+        const ring = k % rings
+        const slot = Math.floor(k / rings)
+        const slots = Math.ceil(c / rings)
         const spread = Math.min(maxSpreadDeg, 26 * (slots - 1))
         const a = ((centerDeg + (slots === 1 ? 0 : spread * (slot / (slots - 1) - 0.5)) + ring * 9) * Math.PI) / 180
         const r = radius * (1 + ring * (OUTER_RING - 1))
@@ -300,11 +285,11 @@ export class World {
     // a galaxy core far behind can cover the same pixels as a neighbour in front.
     const { forward, right } = basis
     const D = basis.distance ?? R * 4
-    for (let i = 0; i < this.n; i++) {
+    for (let i = 0; i < n; i++) {
       if (taken.has(i)) continue
       const dx = this.base[i * 3] - fx, dy = this.base[i * 3 + 1] - fy, dz = this.base[i * 3 + 2] - fz
       const along = dx * forward.x + dy * forward.y + dz * forward.z
-      const isDomain = g.topics[i].level === 0
+      const isDomain = this.level[i] === 0
       if (along < -D * 0.92) continue // behind the camera
       if (along > (isDomain ? D * 3 : R * 2.5)) continue
       let lx = dx - forward.x * along, ly = dy - forward.y * along, lz = dz - forward.z * along
@@ -325,47 +310,32 @@ export class World {
     this.posDirty = true
   }
 
-  /** Derive target emphasis for every node and edge from focus / hover / route. */
+  /** Derive target emphasis for every node from focus / hover / preview. */
   private recompute() {
     const g = this.graph
-    const n = this.n
+    const n = this.count
     const f = this.focus
+    const hop = this.hop
 
-    const hop = new Int8Array(n).fill(-1)
-    if (f >= 0) {
+    hop.fill(-1, 0, n)
+    if (f >= 0 && f < n) {
       hop[f] = 0
-      for (const j of g.neighbors(f)) hop[j] = 1
-      for (let i = 0; i < n; i++) if (hop[i] === 1) for (const j of g.neighbors(i)) if (hop[j] < 0) hop[j] = 2
+      const first = g.neighbors(f)
+      for (const j of first) hop[j] = 1
+      for (const j of first) for (const k of g.neighbors(j)) if (hop[k] < 0) hop[k] = 2
     }
     const fDomain = f >= 0 ? g.topics[f].domain : null
+    const quiet = f >= 0 ? [0.14, 0.12, 0.1, 0.075][g.topics[f].level] : 0
 
     for (let i = 0; i < n; i++) {
       const t = g.topics[i]
       let e = BASE_EMPH[t.level] * (t.mapped === false ? 0.62 : 1)
       if (f >= 0) {
-        const quiet = [0.14, 0.12, 0.1, 0.075][g.topics[f].level]
         e = hop[i] === 0 ? 1 : hop[i] === 1 ? 0.96 : hop[i] === 2 ? 0.36 : t.domain === fDomain ? quiet * 2 : quiet
         // Unrelated galaxy cores stay as faint landmarks — they must never outshine the focus.
         if (t.level === 0) e = hop[i] >= 0 && hop[i] <= 1 ? Math.max(e, 0.5) : Math.max(e, 0.16)
       }
       this.emphT[i] = e
-    }
-
-    for (let e = 0; e < this.m; e++) {
-      const s = g.edgeSource[e], t = g.edgeTarget[e], type = g.edgeType[e]
-      let v: number
-      let flow = 0
-      if (f < 0) {
-        const topLevel = Math.min(g.topics[s].level, g.topics[t].level)
-        v = type === 0 ? (topLevel === 0 ? 0.3 : 0.2) : type === 1 ? 0.05 : type === 3 ? 0.055 : 0.03
-      } else if (s === f || t === f) {
-        v = 1
-        flow = 1
-      } else if (hop[s] === 1 && hop[t] === 1) v = 0.2
-      else if (hop[s] >= 0 && hop[t] >= 0 && hop[s] + hop[t] <= 3) v = 0.06
-      else v = type === 0 ? 0.035 : 0.012
-      this.edgeEmphT[e] = v
-      this.edgeFlowT[e] = flow
     }
 
     const accent = (h: number, strength: number) => {
@@ -374,122 +344,95 @@ export class World {
       for (const e of g.adj[h]) {
         const o = g.other(e, h)
         this.emphT[o] = Math.max(this.emphT[o], 0.82 * strength)
-        this.edgeEmphT[e] = Math.max(this.edgeEmphT[e], 0.78 * strength)
-        this.edgeFlowT[e] = Math.max(this.edgeFlowT[e], 0.55 * strength)
       }
     }
     if (this.hoverIdx >= 0 && this.hoverIdx !== f) {
-      if (f < 0) {
-        // Everything else recedes very slightly so the hovered cluster reads.
-        for (let i = 0; i < n; i++) this.emphT[i] *= 0.72
-        for (let e = 0; e < this.m; e++) this.edgeEmphT[e] *= 0.6
-      }
+      // Everything else recedes very slightly so the hovered cluster reads.
+      if (f < 0) for (let i = 0; i < n; i++) this.emphT[i] *= 0.72
       accent(this.hoverIdx, 1)
     }
     if (this.previewIdx >= 0 && this.previewIdx !== f) accent(this.previewIdx, 0.9)
-    for (const e of this.routeEdges) {
-      this.edgeEmphT[e] = Math.max(this.edgeEmphT[e], 0.9)
-    }
 
-    for (let i = 0; i < n; i++) this.hoverT[i] = i === this.hoverIdx || i === this.previewIdx ? 1 : 0
-
-    // Waking connections draw themselves outward from whatever woke them.
-    const origins = [f, this.hoverIdx, this.previewIdx].filter((x) => x >= 0)
-    const instant = prefersReducedMotion()
-    for (let e = 0; e < this.m; e++) {
-      if (this.edgeEmphT[e] < 0.5 || this.edgeEmph[e] > 0.35) continue
-      const s = g.edgeSource[e], t = g.edgeTarget[e]
-      const origin = origins.find((o) => o === s || o === t)
-      this.edgeGrowDir[e] = origin === undefined || origin === s ? 1 : -1
-      this.edgeGrow[e] = instant ? 1 : 0
-    }
+    this.hoverT.fill(0, 0, n)
+    if (this.hoverIdx >= 0) this.hoverT[this.hoverIdx] = 1
+    if (this.previewIdx >= 0) this.hoverT[this.previewIdx] = 1
     this.emphDirty = true
+    this.edges.markStateDirty()
+  }
+
+  /** Target emphasis / flow for one relationship under the current focus, hover and route. */
+  edgeTarget(e: number): [number, number] {
+    const g = this.graph
+    const s = g.edgeSource[e], t = g.edgeTarget[e], type = g.edgeType[e]
+    const f = this.focus
+    let v: number
+    let flow = 0
+    if (f < 0) {
+      const topLevel = Math.min(this.level[s], this.level[t])
+      v = type === 0 ? (topLevel === 0 ? 0.3 : 0.2) : type === 1 ? 0.05 : type === 3 ? 0.055 : 0.03
+    } else if (s === f || t === f) {
+      v = 1
+      flow = 1
+    } else {
+      const hs = this.hop[s], ht = this.hop[t]
+      if (hs === 1 && ht === 1) v = 0.2
+      else if (hs >= 0 && ht >= 0 && hs + ht <= 3) v = 0.06
+      else v = type === 0 ? 0.035 : 0.012
+    }
+    for (const [h, strength] of [
+      [this.hoverIdx, 1],
+      [this.previewIdx, 0.9],
+    ] as const) {
+      if (h < 0 || h === f) continue
+      if (h === s || h === t) {
+        v = Math.max(v, 0.78 * strength)
+        flow = Math.max(flow, 0.55 * strength)
+      } else if (f < 0 && h === this.hoverIdx) v *= 0.6
+    }
+    if (this.routeEdges.has(e)) v = Math.max(v, 0.9)
+    return [v, flow]
   }
 
   // ─── Simulation ───────────────────────────────────────────────────────
 
-  update(dt: number) {
+  update(dt: number, clock: number) {
     dt = Math.min(dt, 1 / 20)
+    this.clock = clock
     this.changed.pos = this.posDirty
     this.changed.emph = this.emphDirty
     this.changed.known = this.knownDirty
+    this.changed.born = this.bornDirty
     this.knownDirty = false
+    this.bornDirty = false
     this.reveal = damp(this.reveal, this.revealT, 0.9, dt)
     this.dim = damp(this.dim, this.dimT, 2.2, dt)
     this.mapLayer = damp(this.mapLayer, this.mapLayerT, 4, dt)
+    const n = this.count
 
     if (this.posDirty) {
       let moving = false
-      for (let k = 0; k < this.n * 3; k++) {
+      for (let k = 0; k < n * 3; k++) {
         springTo(this.pos, k, this.vel, this.target[k], 3.1, dt)
-        if (Math.abs(this.pos[k] - this.target[k]) > 1e-3 || Math.abs(this.vel[k]) > 1e-3) moving = true
+        if (!moving && (Math.abs(this.pos[k] - this.target[k]) > 1e-3 || Math.abs(this.vel[k]) > 1e-3)) moving = true
       }
-      this.edgeDirty = true
       if (!moving) this.posDirty = false
     }
 
     if (this.emphDirty) {
       let moving = false
-      for (let i = 0; i < this.n; i++) {
-        this.emph[i] = damp(this.emph[i], this.emphT[i], 5, dt)
-        this.hover[i] = damp(this.hover[i], this.hoverT[i], 9, dt)
-        this.focusAmt[i] = damp(this.focusAmt[i], i === this.focus ? 1 : 0, 3, dt)
-        if (Math.abs(this.emph[i] - this.emphT[i]) > 1e-3 || Math.abs(this.hover[i] - this.hoverT[i]) > 1e-3) moving = true
-        if (Math.abs(this.focusAmt[i] - (i === this.focus ? 1 : 0)) > 1e-3) moving = true
+      const ke = 1 - Math.exp(-5 * dt)
+      const kh = 1 - Math.exp(-9 * dt)
+      const kf = 1 - Math.exp(-3 * dt)
+      for (let i = 0; i < n; i++) {
+        this.emph[i] += (this.emphT[i] - this.emph[i]) * ke
+        this.hover[i] += (this.hoverT[i] - this.hover[i]) * kh
+        const ft = i === this.focus ? 1 : 0
+        this.focusAmt[i] += (ft - this.focusAmt[i]) * kf
+        if (!moving && (Math.abs(this.emph[i] - this.emphT[i]) > 1e-3 || Math.abs(this.hover[i] - this.hoverT[i]) > 1e-3 || Math.abs(this.focusAmt[i] - ft) > 1e-3)) moving = true
       }
-      for (let e = 0; e < this.m; e++) {
-        this.edgeEmph[e] = damp(this.edgeEmph[e], this.edgeEmphT[e], 4, dt)
-        this.edgeFlow[e] = damp(this.edgeFlow[e], this.edgeFlowT[e], 3, dt)
-        if (this.edgeGrow[e] < 1) {
-          this.edgeGrow[e] = Math.min(1, this.edgeGrow[e] + dt / 0.62)
-          moving = true
-        }
-        if (Math.abs(this.edgeEmph[e] - this.edgeEmphT[e]) > 1e-3 || Math.abs(this.edgeFlow[e] - this.edgeFlowT[e]) > 1e-3) moving = true
-      }
-      this.edgeDirty = true
       if (!moving) this.emphDirty = false
     }
-  }
-
-  /** Rebuild edge curves (quadratic Béziers bowed away from the universe core). */
-  writeEdgeGeometry() {
-    const g = this.graph
-    const vpe = EDGE_SEGMENTS + 1
-    const P = this.pos
-    const [cx, cy, cz] = this.layout.center
-    for (let e = 0; e < this.m; e++) {
-      const s = g.edgeSource[e], t = g.edgeTarget[e]
-      const ax = P[s * 3], ay = P[s * 3 + 1], az = P[s * 3 + 2]
-      const bx = P[t * 3], by = P[t * 3 + 1], bz = P[t * 3 + 2]
-      const mx = (ax + bx) / 2, my = (ay + by) / 2, mz = (az + bz) / 2
-      let dx = bx - ax, dy = by - ay, dz = bz - az
-      const len = Math.hypot(dx, dy, dz) || 1
-      dx /= len; dy /= len; dz /= len
-      // Bow direction: away from the core, orthogonal to the edge.
-      let ox = mx - cx, oy = my - cy + 12, oz = mz - cz
-      const dot = ox * dx + oy * dy + oz * dz
-      ox -= dx * dot; oy -= dy * dot; oz -= dz * dot
-      const ol = Math.hypot(ox, oy, oz) || 1
-      const type = g.edgeType[e]
-      const bow = len * (type === 0 ? 0.07 : type === 1 ? 0.14 : 0.2)
-      const qx = mx + (ox / ol) * bow, qy = my + (oy / ol) * bow, qz = mz + (oz / ol) * bow
-      const em = this.edgeEmph[e]
-      const fl = this.edgeFlow[e]
-      const gr = this.edgeGrowDir[e] * (this.edgeGrow[e] * 0.999 + 0.001)
-      for (let k = 0; k < vpe; k++) {
-        const u = k / EDGE_SEGMENTS
-        const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u
-        const v = e * vpe + k
-        this.edgeVerts[v * 3] = a * ax + b * qx + c * bx
-        this.edgeVerts[v * 3 + 1] = a * ay + b * qy + c * by
-        this.edgeVerts[v * 3 + 2] = a * az + b * qz + c * bz
-        this.edgeVertEmph[v] = em
-        this.edgeVertFlow[v] = fl
-        this.edgeVertGrow[v] = gr
-        this.edgeVertLen[v] = len
-      }
-    }
-    this.edgeDirty = false
+    this.edges.update(dt)
   }
 
   /** On-screen size of a node, matching the node shader (the focus is enlarged). */
@@ -498,11 +441,26 @@ export class World {
     return s + (Math.max(s * 1.3, 1.85) - s) * this.focusAmt[i]
   }
 
+  /** Is this node visible yet (loaded and ignited)? */
+  alive(i: number) {
+    return i < this.count && this.born[i] <= this.clock + 0.2
+  }
+
   nodePosition(i: number, out = new Vector3()) {
     return out.set(this.pos[i * 3], this.pos[i * 3 + 1], this.pos[i * 3 + 2])
   }
 
   basePosition(i: number, out = new Vector3()) {
     return out.set(this.base[i * 3], this.base[i * 3 + 1], this.base[i * 3 + 2])
+  }
+
+  /** Re-time births (used by the intro so the universe ignites as the camera arrives). */
+  igniteAll(from: number, span: number) {
+    const [cx, cy, cz] = [this.center.x, this.center.y, this.center.z]
+    for (let i = 0; i < this.count; i++) {
+      const d = Math.hypot(this.base[i * 3] - cx, this.base[i * 3 + 1] - cy, this.base[i * 3 + 2] - cz)
+      this.born[i] = from + Math.min(0.85, this.level[i] * 0.14 + d / 520 + ((i * 0.61803) % 1) * 0.06) * span
+    }
+    this.bornDirty = true
   }
 }
