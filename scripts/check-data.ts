@@ -1,44 +1,20 @@
 /**
- * Validates the knowledge dataset: every reference resolves, every paper
- * exists, and rich-text links point at real topics. Run: npm run check:data
+ * Validates the curated dataset with the same rules imported data must pass.
+ * Run: npm run check:data
  */
 import { allTopics, papers } from '../src/data'
+import { contentHash, validateTopics } from '../src/knowledge/validate'
 
-const ids = new Set(allTopics.map((t) => t.id))
-const problems: string[] = []
-const dup = allTopics.map((t) => t.id).filter((id, i, a) => a.indexOf(id) !== i)
-if (dup.length) problems.push(`duplicate ids: ${dup.join(', ')}`)
-
-const textFields = ['simple', 'intuition', 'analogy', 'howItWorks', 'technical', 'math', 'why'] as const
-for (const t of allTopics) {
-  const check = (kind: string, id?: string) => {
-    if (id && !ids.has(id)) problems.push(`${t.id}: ${kind} → unknown topic "${id}"`)
-  }
-  check('parent', t.parent)
-  t.prerequisites?.forEach((p) => check('prerequisite', p))
-  t.related?.forEach((p) => check('related', p))
-  t.deeper?.forEach((p) => check('deeper', p))
-  t.research?.forEach((r) => {
-    if (!papers[r.paper]) problems.push(`${t.id}: unknown paper "${r.paper}"`)
-  })
-  if (t.parent) {
-    const parent = allTopics.find((x) => x.id === t.parent)
-    if (parent && parent.level !== t.level - 1) problems.push(`${t.id}: level ${t.level} but parent ${parent.id} is level ${parent.level}`)
-  }
-  for (const f of textFields) {
-    const text = t[f]
-    if (!text) continue
-    for (const m of text.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)) check(`link in ${f}`, m[1])
-    const dollars = (text.replace(/\$\$/g, '').match(/\$/g) ?? []).length
-    if (dollars % 2) problems.push(`${t.id}: unbalanced $ in ${f}`)
-  }
-}
+const issues = validateTopics(allTopics, { papers })
 const cited = new Set(allTopics.flatMap((t) => t.research?.map((r) => r.paper) ?? []))
-for (const id of Object.keys(papers)) if (!cited.has(id)) problems.push(`paper "${id}" is never cited`)
+for (const id of Object.keys(papers)) if (!cited.has(id)) issues.push({ severity: 'warning', code: 'unknown-paper', id, message: `paper "${id}" is never cited` })
 
-console.log(`${allTopics.length} topics · ${Object.keys(papers).length} papers`)
-if (problems.length) {
-  console.error(problems.map((p) => '  ✗ ' + p).join('\n'))
+const errors = issues.filter((i) => i.severity === 'error')
+const warnings = issues.filter((i) => i.severity === 'warning')
+console.log(`${allTopics.length} topics · ${Object.keys(papers).length} papers · content ${contentHash(allTopics)}`)
+for (const w of warnings) console.warn(`  ! ${w.id}: ${w.message}`)
+if (errors.length) {
+  for (const e of errors) console.error(`  ✗ ${e.id}: ${e.message}`)
   process.exit(1)
 }
-console.log('  ✓ all references resolve')
+console.log(`  ✓ all references resolve (${warnings.length} warning${warnings.length === 1 ? '' : 's'})`)

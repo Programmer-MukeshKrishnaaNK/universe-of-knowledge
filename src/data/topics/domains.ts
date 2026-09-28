@@ -105,7 +105,7 @@ export const domains: Topic[] = [
   {
     id: 'earth-science',
     title: 'Earth Science',
-    aliases: ['geology', 'climate'],
+    aliases: ['geology'],
     domain: 'earth-science',
     level: 0,
     difficulty: 'beginner',

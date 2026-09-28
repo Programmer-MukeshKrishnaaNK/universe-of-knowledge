@@ -1,0 +1,40 @@
+{
+  "format": "uok.dataset/1",
+  "dataset": {
+    "id": "example-geometry",
+    "title": "Example dataset (format demonstration)",
+    "version": "1.0.0",
+    "description": "A tiny dataset showing the import format. Its concepts attach to the curated universe.",
+    "license": "CC BY 4.0",
+    "sources": [{ "id": "authored", "title": "Authored for the Universe of Knowledge documentation" }]
+  },
+  "topics": [
+    {
+      "id": "pythagorean-theorem",
+      "title": "Pythagorean Theorem",
+      "aliases": ["pythagoras"],
+      "domain": "mathematics",
+      "level": 2,
+      "parent": "geometry",
+      "difficulty": "beginner",
+      "short": "In a right triangle, the square on the longest side equals the sum of the squares on the other two.",
+      "simple": "For any right-angled triangle with shorter sides $a$ and $b$ and longest side $c$, $a^2 + b^2 = c^2$.",
+      "prerequisites": ["algebra"],
+      "related": ["trigonometry", "vectors"],
+      "relations": [{ "type": "application", "target": "vectors", "note": "The length of a vector follows from it." }]
+    },
+    {
+      "id": "dot-product",
+      "title": "Dot Product",
+      "aliases": ["scalar product", "inner product of vectors"],
+      "domain": "mathematics",
+      "level": 3,
+      "parent": "vectors",
+      "difficulty": "intermediate",
+      "short": "Multiplying two vectors to get a number that measures how much they point the same way.",
+      "simple": "The dot product of two arrows is large when they point the same way, zero when they are perpendicular, and negative when they point apart.",
+      "prerequisites": ["vectors", "trigonometry"],
+      "relations": [{ "type": "uses", "target": "pythagorean-theorem" }]
+    }
+  ]
+}

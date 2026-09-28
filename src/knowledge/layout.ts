@@ -31,6 +31,8 @@ export const DOMAIN_ANCHORS: Record<string, [number, number, number]> = {
 }
 
 export const LEVEL_RADIUS = [0, 20, 8.5, 5.8]
+/** Galaxy radius the hand-composed domain anchors were designed around. */
+const DESIGN_RADIUS = 38
 const MIN_DIST = [0, 9, 4.6, 3.6]
 /** Families larger than this are packed as a ball instead of a shell. */
 const SHELL_LIMIT = 36
@@ -75,14 +77,9 @@ export function estimateDomainRadius(count: number) {
  */
 export function scaledAnchors(counts: Record<string, number>, radii: Record<string, number | undefined> = {}): Record<string, [number, number, number]> {
   const ids = Object.keys(DOMAIN_ANCHORS)
-  let minGap = Infinity
-  for (let a = 0; a < ids.length; a++)
-    for (let b = a + 1; b < ids.length; b++) {
-      const A = DOMAIN_ANCHORS[ids[a]], B = DOMAIN_ANCHORS[ids[b]]
-      minGap = Math.min(minGap, Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]))
-    }
+  // The hand-composed anchors are designed for galaxies of radius ~38; only larger ones spread them out.
   const biggest = Math.max(...ids.map((id) => radii[id] ?? estimateDomainRadius(counts[id] ?? 0)))
-  const scale = Math.max(1, (biggest * 2.3) / minGap)
+  const scale = biggest <= DESIGN_RADIUS ? 1 : (biggest / DESIGN_RADIUS) * 1.1
   return Object.fromEntries(ids.map((id) => [id, DOMAIN_ANCHORS[id].map((v) => v * scale) as [number, number, number]]))
 }
 

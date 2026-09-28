@@ -32,6 +32,8 @@ export interface UniverseManifest {
   /** Dataset identity and version (see ingestion). */
   dataset: string
   version: string
+  /** Content hash of the knowledge — exactly which knowledge produced this experience. */
+  hash?: string
   total: number
   domains: DomainManifest[]
   regions: RegionManifest[]

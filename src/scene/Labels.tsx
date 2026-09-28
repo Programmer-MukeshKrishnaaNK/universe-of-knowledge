@@ -116,7 +116,7 @@ export function Labels({ poolSize }: { poolSize: number }) {
     const focusNeighbors = hasFocus ? new Set(graph.neighbors(w.focus)) : null
     const focal = camera.projectionMatrix.elements[5] * viewport.height * 0.5
     const op = opacity.current
-    const spread = Math.max(1, universe.extent / 158.5)
+    const spread = Math.max(1, universe.extent / 137) // 137 = the curated universe
     const bandScale = [1, spread, Math.sqrt(spread), 1]
 
     // ── Who could be labelled? ──

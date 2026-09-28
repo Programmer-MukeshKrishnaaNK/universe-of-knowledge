@@ -90,7 +90,7 @@ export function Nodes({ profile }: { profile: QualityProfile }) {
     u.uMinPointPx.value = profile.minPointPx
     u.uCompress.value = profile.compress ? 1 : 0
     u.uCompressRange.value = [universe.extent * 0.75, universe.extent * 1.35]
-    u.uFog.value = [universe.extent * 3, universe.extent * 8.6]
+    u.uFog.value = [universe.extent * 2.77, universe.extent * 8.03] // = 380 / 1100 for the curated universe
     if (lastGeneration.current !== w.generation) {
       lastGeneration.current = w.generation
       mesh.geometry.instanceCount = w.count

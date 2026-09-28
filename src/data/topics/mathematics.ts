@@ -448,7 +448,7 @@ $$\alpha + \beta + \gamma = \pi + \frac{A}{R^2}$$`,
   {
     id: 'fourier-analysis',
     title: 'Fourier Analysis',
-    aliases: ['fourier transform', 'frequency', 'spectrum'],
+    aliases: ['fourier transform', 'spectrum'],
     domain: 'mathematics',
     level: 2,
     parent: 'calculus',

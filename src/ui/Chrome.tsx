@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { levelName } from '../data'
-import { graph } from '../graph'
+import { graph, universe } from '../graph'
 import { useExplore } from '../store/explore'
 import { useKnowledge } from '../store/knowledge'
 import { hud } from './hud'
@@ -120,6 +120,12 @@ export function Controls() {
           <p><b>Drag</b> to orbit · <b>Right-drag</b> or <b>Shift-drag</b> to pan · <b>Scroll</b> or pinch to zoom</p>
           <p><b>Click</b> a point of light to travel there</p>
           <p><kbd>/</kbd> search · <kbd>Esc</kbd> back · <kbd>←</kbd><kbd>→</kbd> look around · <kbd>Enter</kbd> travel · <kbd>H</kbd> overview · <kbd>M</kbd> your map</p>
+          {universe.manifest && (
+            <p className="help-version">
+              Knowledge: {universe.manifest.dataset} {universe.manifest.version}
+              {universe.manifest.hash ? ` · ${universe.manifest.hash}` : ''} · {graph.size.toLocaleString()} concepts
+            </p>
+          )}
         </div>
       )}
       <QualityControl />

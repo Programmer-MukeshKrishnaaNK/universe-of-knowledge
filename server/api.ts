@@ -1,6 +1,11 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { allTopics, papers } from '../src/data'
 import { KnowledgeGraph } from '../src/knowledge/graph'
+import { CURATED_VERSION } from '../src/knowledge/sources/bundled'
+import { contentHash } from '../src/knowledge/validate'
+
+/** The guide reports exactly which knowledge it is grounded in. */
+const KNOWLEDGE_HASH = contentHash(allTopics)
 import { buildMessages, composeOffline, type Mode } from './ai/prompt'
 import { OfflineProvider, providerFromEnv, type AIProvider, type ChatMessage } from './ai/providers'
 
@@ -48,7 +53,8 @@ export function createApi(env: Record<string, string | undefined>) {
 
     if (url === '/api/health' && req.method === 'GET') {
       res.setHeader('content-type', 'application/json')
-      res.end(JSON.stringify(live ? { provider: live.name, model: live.model, live: true } : { provider: 'offline', model: 'knowledge-graph', live: false }))
+      const knowledge = { dataset: 'curated', version: CURATED_VERSION, hash: KNOWLEDGE_HASH }
+      res.end(JSON.stringify(live ? { provider: live.name, model: live.model, live: true, knowledge } : { provider: 'offline', model: 'knowledge-graph', live: false, knowledge }))
       return
     }
 

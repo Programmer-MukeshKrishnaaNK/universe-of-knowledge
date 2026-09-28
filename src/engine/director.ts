@@ -54,7 +54,7 @@ export function initWorld() {
 }
 
 /** The overview frames every mapped domain, whatever the dataset size. */
-const OVERVIEW_RADIUS = () => universe.extent * (isCompact() ? 2.145 : 1.546)
+const OVERVIEW_RADIUS = () => universe.extent * (isCompact() ? 2.482 : 1.788) // = Phase 2's 340 / 245 for the curated universe
 
 function overviewPose(w: World) {
   const s = new Spherical().setFromVector3(rig.position.clone().sub(rig.target))

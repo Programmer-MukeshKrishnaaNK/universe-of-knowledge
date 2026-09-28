@@ -741,6 +741,13 @@ kbd {
 .help p:last-child {
   margin: 0;
 }
+.help-version {
+  margin-top: 8px !important;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-4);
+}
 .help b {
   color: var(--ink);
   font-weight: 500;

@@ -109,7 +109,7 @@ export function Edges({ budget, segments }: { budget: number; segments: number }
     u.uMotion.value = prefersReducedMotion() ? 0 : 1
     u.uMap.value = w.mapLayer
     u.uFocused.value = w.focus >= 0 ? 1 : 0
-    u.uFog.value = [universe.extent * 3.1, universe.extent * 8.6]
+    u.uFog.value = [universe.extent * 2.77, universe.extent * 8.03]
     const camDist = state.camera.position.distanceTo(rig.target)
     u.uNear.value = Math.max(30, camDist * 0.6)
 
